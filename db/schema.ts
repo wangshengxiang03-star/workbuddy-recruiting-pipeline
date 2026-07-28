@@ -43,3 +43,19 @@ export const activityLogs = sqliteTable("activity_logs", {
   actorEmail: text("actor_email"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export const resumeFiles = sqliteTable("resume_files", {
+  id: text("id").primaryKey(),
+  batchId: text("batch_id").notNull(),
+  originalName: text("original_name").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  targetRole: text("target_role"),
+  status: text("status").notNull().default("已入库"),
+  score: integer("score"),
+  result: text("result"),
+  uploadedBy: text("uploaded_by"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Candidate = {
   id: string;
@@ -263,7 +263,24 @@ function JobsPanel({ notify }: Pick<ModuleProps, "notify">) {
 }
 
 function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "notify" | "runBatch" | "batchRunning">) {
-  const [localFiles, setLocalFiles] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{
+    id: string;
+    name: string;
+    role: string;
+    status: string;
+    score: number | null;
+    result: string;
+  }>>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/resumes", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload: { files: typeof uploadedFiles }) => setUploadedFiles(payload.files))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
   const queue: string[][] = [
     ["林栩-高级产品经理.pdf", "高级产品经理", "已完成", "92", "强推荐"],
     ["周玥_增长专家.docx", "用户增长专家", "已完成", "86", "强推荐"],
@@ -271,14 +288,41 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
     ["方清.png", "招聘运营经理", "OCR 识别", "—", "处理中"],
     ["李文浩.pdf", "高级产品经理", "重复投递", "—", "已跳过"],
     ["赵岚-增长.pdf", "用户增长专家", "硬门槛淘汰", "32", "经验不足"],
-    ...localFiles.map((name) => [name, "待识别岗位", batchRunning ? "文本解析" : "待处理", "—", batchRunning ? "处理中" : "等待"]),
+    ...uploadedFiles.map((file) => [
+      file.name,
+      file.role,
+      batchRunning ? "文本解析" : file.status,
+      file.score === null ? "—" : String(file.score),
+      batchRunning ? "处理中" : file.result,
+    ]),
   ];
-  const handleLocalFiles = (files: FileList | null) => {
+  const handleLocalFiles = async (files: FileList | null) => {
     if (!files?.length) return;
-    const names = Array.from(files).map((file) => file.name);
-    setLocalFiles((current) => [...current, ...names]);
-    notify(`已在本地加入 ${names.length} 份简历，未上传文件内容`);
-    runBatch();
+    const selectedFiles = Array.from(files);
+    const formData = new FormData();
+    selectedFiles.forEach((file) => formData.append("files", file));
+    setUploading(true);
+    try {
+      const response = await fetch("/api/resumes", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json()) as {
+        files?: typeof uploadedFiles;
+        error?: string;
+      };
+      if (!response.ok || !payload.files) {
+        throw new Error(payload.error ?? "简历入库失败");
+      }
+      setUploadedFiles((current) => [...payload.files!, ...current]);
+      notify(`${payload.files.length} 份简历已安全入库，开始执行解析队列`);
+      runBatch();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "简历入库失败，请稍后重试");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
   return (
     <div className="module-page">
@@ -286,8 +330,8 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
         eyebrow="RESUME SCREENING"
         title="简历智能筛选"
         description="统一处理 PDF、Word 与图片简历，自动完成解析、去重、硬门槛校验和匹配度评分。"
-        action={batchRunning ? "正在处理…" : "选择简历文件"}
-        onAction={runBatch}
+        action={uploading ? "正在入库…" : batchRunning ? "正在处理…" : "上传简历文件"}
+        onAction={() => fileInputRef.current?.click()}
       />
       <div className="screening-stats">
         {[["今日新增", "18", "份"], ["已完成", "14", "份"], ["重复投递", "2", "份"], ["平均耗时", "7.8", "秒/份"]].map(([label, value, unit]) => <div key={label}><span>{label}</span><strong>{value}<small>{unit}</small></strong></div>)}
@@ -304,7 +348,7 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
             ["05", "匹配度评分", "权重、加减分项综合计算", batchRunning ? "waiting" : "done"],
             ["06", "分层归档", "重命名并更新招聘台账", batchRunning ? "waiting" : "done"],
           ].map(([index, title, desc, state]) => <div className={`flow-step ${state}`} key={index}><i>{state === "done" ? "✓" : index}</i><span><strong>{title}</strong><small>{desc}</small></span>{state === "running" && <em>运行中</em>}</div>)}
-          <div className="local-note"><i>⌂</i><span><strong>数据仅在本地目录流转</strong><small>/招聘流水线/新增简历</small></span></div>
+          <div className="local-note"><i>⌂</i><span><strong>文件已进入私有安全存储</strong><small>按日期与批次隔离归档</small></span></div>
         </aside>
         <div className="queue-panel">
           <div className="panel-title"><div><span>当前批次</span><strong>文件处理队列</strong></div><div className="queue-actions"><button onClick={() => notify("筛选结果 CSV 已导出")}>导出结果</button><button onClick={runBatch}>重新运行</button></div></div>
@@ -315,7 +359,7 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
               <span><i>{file.endsWith(".png") ? "IMG" : file.endsWith(".docx") ? "DOC" : "PDF"}</i><b>{file}</b></span><span>{role}</span><span><em className={state === "已完成" ? "success" : state.includes("淘汰") || state.includes("重复") ? "muted" : "working"}>{state}</em></span><span><strong>{score}</strong></span><span>{result}<b>→</b></span>
             </button>)}
           </div>
-          <label className="drop-zone"><input type="file" multiple accept=".pdf,.doc,.docx,image/*" onChange={(event) => handleLocalFiles(event.target.files)} /><i>↥</i><span><strong>继续添加简历</strong><small>仅在本地读取文件名进行演示，不上传文件内容</small></span><b>浏览文件</b></label>
+          <label className={`drop-zone ${uploading ? "uploading" : ""}`}><input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" disabled={uploading} onChange={(event) => void handleLocalFiles(event.target.files)} /><i>{uploading ? "◌" : "↥"}</i><span><strong>{uploading ? "正在加密入库…" : "继续添加简历"}</strong><small>支持 PDF、Word 和图片；单份不超过 15MB，单批最多 100 份</small></span><b>{uploading ? "请稍候" : "浏览文件"}</b></label>
         </div>
       </div>
     </div>

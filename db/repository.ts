@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "./index";
-import { activityLogs, candidates, jobs } from "./schema";
+import { activityLogs, candidates, jobs, resumeFiles } from "./schema";
 
 const seedCandidates: Array<typeof candidates.$inferInsert> = [
   {
@@ -178,4 +178,19 @@ export async function listRecentActivity() {
     .from(activityLogs)
     .orderBy(desc(activityLogs.createdAt))
     .limit(8);
+}
+
+export async function createResumeRecords(
+  records: Array<typeof resumeFiles.$inferInsert>,
+) {
+  if (!records.length) return [];
+  return getDb().insert(resumeFiles).values(records).returning();
+}
+
+export async function listResumeRecords(limit = 50) {
+  return getDb()
+    .select()
+    .from(resumeFiles)
+    .orderBy(desc(resumeFiles.createdAt))
+    .limit(limit);
 }
