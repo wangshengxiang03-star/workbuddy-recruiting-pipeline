@@ -121,6 +121,274 @@ function ScoreRing({ score, small = false }: { score: number; small?: boolean })
   );
 }
 
+type ModuleProps = {
+  active: string;
+  notify: (message: string) => void;
+  runBatch: () => void;
+  batchRunning: boolean;
+  setSelected: (candidate: Candidate | null) => void;
+};
+
+const standards = [
+  {
+    role: "高级产品经理",
+    dept: "产品与增长部",
+    version: "v3",
+    updated: "今天 10:24",
+    owner: "王嘉琪",
+    gates: ["本科及以上", "5 年以上产品经验", "B 端产品经验"],
+    weights: [["业务洞察", 30], ["产品能力", 30], ["数据分析", 20], ["协作影响力", 20]],
+  },
+  {
+    role: "用户增长专家",
+    dept: "市场增长部",
+    version: "v2",
+    updated: "昨天 16:40",
+    owner: "孟玮",
+    gates: ["本科及以上", "4 年以上增长经验", "有实验平台经验"],
+    weights: [["增长策略", 35], ["实验设计", 25], ["数据能力", 25], ["项目推进", 15]],
+  },
+  {
+    role: "招聘运营经理",
+    dept: "人力资源部",
+    version: "v1",
+    updated: "7 月 25 日",
+    owner: "王嘉琪",
+    gates: ["本科及以上", "3 年招聘运营经验"],
+    weights: [["流程设计", 35], ["项目管理", 25], ["数据分析", 20], ["业务理解", 20]],
+  },
+];
+
+function ModuleHeader({
+  eyebrow,
+  title,
+  description,
+  action,
+  onAction,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="module-header">
+      <div><span>{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>
+      <button className="primary" onClick={onAction}><b>+</b>{action}</button>
+    </div>
+  );
+}
+
+function JobsPanel({ notify }: Pick<ModuleProps, "notify">) {
+  const [selectedStandard, setSelectedStandard] = useState(0);
+  const standard = standards[selectedStandard];
+  return (
+    <div className="module-page">
+      <ModuleHeader
+        eyebrow="JOB STANDARD"
+        title="岗位标准管理"
+        description="统一硬门槛、评分权重与面试考察维度，为 AI 筛选提供唯一判断基准。"
+        action="从 JD 生成标准"
+        onAction={() => notify("已创建岗位标准草稿，可继续补充招聘要求")}
+      />
+      <div className="standard-layout">
+        <div className="standard-list">
+          <div className="panel-title"><div><span>岗位库</span><strong>7 个在招岗位</strong></div><button onClick={() => notify("岗位列表已刷新")}>↻</button></div>
+          {standards.map((item, index) => (
+            <button
+              className={`standard-item ${selectedStandard === index ? "active" : ""}`}
+              key={item.role}
+              onClick={() => setSelectedStandard(index)}
+            >
+              <i>{item.role.slice(0, 1)}</i>
+              <span><strong>{item.role}</strong><small>{item.dept} · {item.owner}</small></span>
+              <em>{item.version}</em>
+            </button>
+          ))}
+          <div className="draft-standard"><i>!</i><span><strong>2 份标准待确认</strong><small>AI 已完成结构化，等待招聘负责人审核</small></span></div>
+        </div>
+        <article className="standard-editor">
+          <div className="editor-head">
+            <div><span>当前标准 · {standard.version}</span><h3>{standard.role}</h3><p>{standard.dept}　更新于 {standard.updated}</p></div>
+            <div><button onClick={() => notify("已复制当前岗位标准")}>复制</button><button className="dark" onClick={() => notify(`${standard.role}标准已保存为新版本`)}>保存版本</button></div>
+          </div>
+          <div className="standard-section">
+            <div className="section-index">01</div>
+            <div className="standard-content"><h4>硬性筛选门槛 <span>一票否决</span></h4>
+              <div className="gate-list">{standard.gates.map((gate) => <label key={gate}><i>✓</i>{gate}<button aria-label={`删除${gate}`}>×</button></label>)}<button className="add-rule" onClick={() => notify("已添加一条空白硬门槛")}>＋ 添加门槛</button></div>
+            </div>
+          </div>
+          <div className="standard-section">
+            <div className="section-index">02</div>
+            <div className="standard-content"><h4>评分维度与权重 <span>合计 100%</span></h4>
+              <div className="weight-list">{standard.weights.map(([label, value]) => (
+                <div key={label}><span>{label}</span><i><em style={{ width: `${Number(value) * 2.15}%` }} /></i><b>{value}%</b></div>
+              ))}</div>
+            </div>
+          </div>
+          <div className="standard-section">
+            <div className="section-index">03</div>
+            <div className="standard-content"><h4>核心考察维度 <span>同步到面试题库</span></h4>
+              <div className="tag-cloud"><span>业务拆解</span><span>复杂项目推进</span><span>数据决策</span><span>领导力</span><span>求职动机</span><button onClick={() => notify("已添加考察维度")}>＋</button></div>
+            </div>
+          </div>
+          <div className="standard-foot"><span><i>✓</i> AI 筛选与面试模板已同步此版本</span><button onClick={() => notify("岗位标准 Markdown 已导出")}>导出标准文档 ↓</button></div>
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "notify" | "runBatch" | "batchRunning">) {
+  const queue = [
+    ["林栩-高级产品经理.pdf", "高级产品经理", "已完成", "92", "强推荐"],
+    ["周玥_增长专家.docx", "用户增长专家", "已完成", "86", "强推荐"],
+    ["陈默简历.pdf", "高级产品经理", "待复筛", "78", "可面试"],
+    ["方清.png", "招聘运营经理", "OCR 识别", "—", "处理中"],
+    ["李文浩.pdf", "高级产品经理", "重复投递", "—", "已跳过"],
+    ["赵岚-增长.pdf", "用户增长专家", "硬门槛淘汰", "32", "经验不足"],
+  ];
+  return (
+    <div className="module-page">
+      <ModuleHeader
+        eyebrow="RESUME SCREENING"
+        title="简历智能筛选"
+        description="统一处理 PDF、Word 与图片简历，自动完成解析、去重、硬门槛校验和匹配度评分。"
+        action={batchRunning ? "正在处理…" : "选择简历文件"}
+        onAction={runBatch}
+      />
+      <div className="screening-stats">
+        {[["今日新增", "18", "份"], ["已完成", "14", "份"], ["重复投递", "2", "份"], ["平均耗时", "7.8", "秒/份"]].map(([label, value, unit]) => <div key={label}><span>{label}</span><strong>{value}<small>{unit}</small></strong></div>)}
+        <div className="automation-toggle"><span className="pulse" /><div><strong>自动扫描已开启</strong><small>每天 10:00 / 14:00 / 18:00</small></div><button aria-label="关闭自动扫描"><i /></button></div>
+      </div>
+      <div className="resume-workspace">
+        <aside className="flow-panel">
+          <div className="panel-title"><div><span>处理流水线</span><strong>批次 #20260728-03</strong></div></div>
+          {[
+            ["01", "文件解析", "PDF / Word / OCR", "done"],
+            ["02", "字段提取", "姓名、背景、技能等 14 项", "done"],
+            ["03", "重复校验", "姓名 + 手机号双重匹配", "done"],
+            ["04", "硬门槛筛选", "按岗位标准逐项判断", batchRunning ? "running" : "done"],
+            ["05", "匹配度评分", "权重、加减分项综合计算", batchRunning ? "waiting" : "done"],
+            ["06", "分层归档", "重命名并更新招聘台账", batchRunning ? "waiting" : "done"],
+          ].map(([index, title, desc, state]) => <div className={`flow-step ${state}`} key={index}><i>{state === "done" ? "✓" : index}</i><span><strong>{title}</strong><small>{desc}</small></span>{state === "running" && <em>运行中</em>}</div>)}
+          <div className="local-note"><i>⌂</i><span><strong>数据仅在本地目录流转</strong><small>/招聘流水线/新增简历</small></span></div>
+        </aside>
+        <div className="queue-panel">
+          <div className="panel-title"><div><span>当前批次</span><strong>文件处理队列</strong></div><div className="queue-actions"><button onClick={() => notify("筛选结果 CSV 已导出")}>导出结果</button><button onClick={runBatch}>重新运行</button></div></div>
+          {batchRunning && <div className="batch-progress"><span><i /></span><b>正在执行硬门槛筛选 · 12 / 18</b><em>预计 38 秒</em></div>}
+          <div className="resume-table">
+            <div className="resume-row resume-head"><span>文件名</span><span>目标岗位</span><span>处理状态</span><span>得分</span><span>结论</span></div>
+            {queue.map(([file, role, state, score, result]) => <button className="resume-row" key={file} onClick={() => notify(`${file}：已打开结构化解析结果`)}>
+              <span><i>{file.endsWith(".png") ? "IMG" : file.endsWith(".docx") ? "DOC" : "PDF"}</i><b>{file}</b></span><span>{role}</span><span><em className={state === "已完成" ? "success" : state.includes("淘汰") || state.includes("重复") ? "muted" : "working"}>{state}</em></span><span><strong>{score}</strong></span><span>{result}<b>→</b></span>
+            </button>)}
+          </div>
+          <div className="drop-zone" onClick={runBatch}><i>↥</i><span><strong>继续添加简历</strong><small>支持一次处理 100 份以上，单个文件不超过 20MB</small></span><button>浏览文件</button></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CandidatesPanel({ setSelected, notify }: Pick<ModuleProps, "setSelected" | "notify">) {
+  const [candidateFilter, setCandidateFilter] = useState("全部");
+  const list = candidateFilter === "全部" ? candidates : candidates.filter((item) => item.status === candidateFilter);
+  return (
+    <div className="module-page">
+      <ModuleHeader eyebrow="CANDIDATE LEDGER" title="候选人总台账" description="集中追踪候选人从入库、筛选、面试到归档的完整状态和每次处理记录。" action="导入候选人" onAction={() => notify("已打开候选人导入向导")} />
+      <div className="ledger-toolbar">
+        <label><span>⌕</span><input placeholder="搜索姓名、公司、技能…" aria-label="搜索候选人" /></label>
+        <div>{["全部", "强推荐", "待复筛", "可面试", "人才储备"].map((item) => <button className={candidateFilter === item ? "active" : ""} key={item} onClick={() => setCandidateFilter(item)}>{item}</button>)}</div>
+        <button onClick={() => notify("已打开高级筛选")}>筛选 ▾</button>
+      </div>
+      <div className="candidate-table full-ledger">
+        <div className="table-row table-header"><span>候选人</span><span>应聘岗位</span><span>AI 匹配度</span><span>当前状态</span><span>负责人 / 更新时间</span><span /></div>
+        {list.map((candidate) => <button className="table-row candidate-row" key={candidate.name} onClick={() => setSelected(candidate)}>
+          <span className="candidate-name"><i className={candidate.tone}>{candidate.initials}</i><b>{candidate.name}<small>{candidate.school}</small></b></span>
+          <span>{candidate.role}<small>{candidate.company}</small></span>
+          <span className={`score score-${candidate.tone}`}><b>{candidate.score}</b><i><em style={{ width: `${candidate.score}%` }} /></i></span>
+          <span><b className={`status ${candidate.tone}`}><i />{candidate.status}</b></span>
+          <span>王嘉琪<small>{candidate.updated}</small></span><span className="row-arrow">→</span>
+        </button>)}
+      </div>
+      <div className="ledger-footer"><span>共 186 位候选人 · 当前显示 {list.length} 位演示数据</span><div><button>‹</button><button className="active">1</button><button>2</button><button>3</button><button>›</button></div></div>
+    </div>
+  );
+}
+
+function InterviewsPanel({ notify, setSelected }: Pick<ModuleProps, "notify" | "setSelected">) {
+  const [view, setView] = useState("日程");
+  const events = [
+    { time: "10:00", name: "林栩", role: "高级产品经理", interviewer: "刘明 · 业务一面", form: "腾讯会议", ready: true },
+    { time: "14:30", name: "周玥", role: "用户增长专家", interviewer: "孟玮 · 业务一面", form: "上海 7F-03", ready: true },
+    { time: "16:00", name: "方清", role: "招聘运营经理", interviewer: "王嘉琪 · HR 面", form: "飞书会议", ready: false },
+  ];
+  return (
+    <div className="module-page">
+      <ModuleHeader eyebrow="INTERVIEW OPERATIONS" title="面试管理" description="确认面试后自动生成画像、题库和评价表，并在面试前向 HR 与面试官提醒。" action="安排面试" onAction={() => notify("已打开面试安排表")} />
+      <div className="interview-toolbar"><div><button className={view === "日程" ? "active" : ""} onClick={() => setView("日程")}>日程视图</button><button className={view === "资料" ? "active" : ""} onClick={() => setView("资料")}>资料包</button></div><span>2026 年 7 月 28 日 · 星期二</span><button onClick={() => notify("已同步面试官日历")}>同步日历 ↻</button></div>
+      {view === "日程" ? (
+        <div className="interview-layout">
+          <div className="schedule">
+            <div className="date-column"><strong>28</strong><span>JUL</span><i /></div>
+            <div className="event-list">{events.map((event, index) => <article className="event-card" key={event.time}>
+              <time>{event.time}<small>60 min</small></time><div className="event-main"><span>{event.role}</span><h3>{event.name}</h3><p>{event.interviewer}　·　{event.form}</p></div>
+              <div className="event-status"><b className={event.ready ? "ready" : "pending"}>{event.ready ? "资料已就绪" : "资料待确认"}</b><button onClick={() => { const found = candidates.find((candidate) => candidate.name === event.name); if (found) setSelected(found); else notify(`${event.name}的资料包正在生成`); }}>查看详情 →</button></div>
+              {index === 1 && <div className="now-line"><i />当前 13:42</div>}
+            </article>)}</div>
+          </div>
+          <aside className="prep-summary">
+            <div className="panel-title"><div><span>今日筹备</span><strong>资料包完成度</strong></div><ScoreRing score={83} small /></div>
+            <div className="prep-list"><div><i className="done">✓</i><span><strong>候选人一页纸画像</strong><small>3 / 3 已生成</small></span></div><div><i className="done">✓</i><span><strong>定制化面试题库</strong><small>3 / 3 已生成</small></span></div><div><i className="pending">!</i><span><strong>面试评价表</strong><small>1 份等待确认</small></span></div><div><i className="done">✓</i><span><strong>面试提醒</strong><small>将在面试前 2 小时推送</small></span></div></div>
+            <button className="primary" onClick={() => { setView("资料"); notify("已切换到面试资料包"); }}>检查待确认资料</button>
+          </aside>
+        </div>
+      ) : (
+        <div className="package-grid">{events.map((event, index) => <article key={event.name}><div className="package-cover"><span>WORKBUDDY · INTERVIEW PACK</span><strong>{event.name}</strong><p>{event.role}</p><i>{index === 2 ? "生成中" : "READY"}</i></div><div className="package-info"><span>{index === 2 ? "2 / 3 文档完成" : "3 份文档 · 12 道定制题"}</span><button onClick={() => notify(`${event.name}面试资料包已打开`)}>打开资料包 →</button></div></article>)}</div>
+      )}
+    </div>
+  );
+}
+
+function TalentPanel({ setSelected, notify }: Pick<ModuleProps, "setSelected" | "notify">) {
+  return (
+    <div className="module-page">
+      <ModuleHeader eyebrow="TALENT COMMUNITY" title="优质人才池" description="沉淀暂未录用但具备长期价值的人才，按岗位族、技能标签和联系状态持续运营。" action="新建人才分组" onAction={() => notify("已创建空白人才分组")} />
+      <div className="talent-groups">{[["产品与策略人才", "38", "12 人近 90 天有互动", "violet"], ["增长与市场人才", "27", "8 人匹配当前岗位", "green"], ["HR 专业人才", "16", "5 人可优先联系", "orange"]].map(([title, count, note, tone]) => <button key={title} onClick={() => notify(`已打开${title}`)}><i className={tone}>♧</i><span><strong>{title}</strong><small>{note}</small></span><b>{count}</b><em>→</em></button>)}</div>
+      <div className="talent-content">
+        <div className="panel-title"><div><span>最近入池</span><strong>值得持续关注的候选人</strong></div><button onClick={() => notify("已按最近联系时间排序")}>最近联系 ▾</button></div>
+        <div className="talent-card-grid">{candidates.filter((candidate) => candidate.score >= 56).map((candidate) => <button key={candidate.name} onClick={() => setSelected(candidate)}><div className={`large-avatar ${candidate.tone}`}>{candidate.initials}</div><span><strong>{candidate.name}</strong><small>{candidate.company}</small></span><em>{candidate.role.replace("高级", "")}</em><p>{candidate.highlights[0]}</p><div><b>上次联系 {candidate.updated}</b><i>查看画像 →</i></div></button>)}</div>
+      </div>
+    </div>
+  );
+}
+
+function ReportsPanel({ notify }: Pick<ModuleProps, "notify">) {
+  const channels = [["Boss 直聘", 68, 24], ["内推", 48, 31], ["猎聘", 32, 19], ["拉勾", 21, 10], ["其他", 17, 7]];
+  return (
+    <div className="module-page">
+      <ModuleHeader eyebrow="RECRUITING ANALYTICS" title="招聘数据报表" description="按岗位、渠道和阶段持续监控招聘效率，并为 AI 筛选准确率提供人工反馈依据。" action="生成本周报告" onAction={() => notify("本周招聘报告已生成并归档")} />
+      <div className="report-kpis">{[["本月简历量", "742", "↑ 12.4%", "positive"], ["初筛通过率", "50.5%", "↑ 3.1%", "positive"], ["邀约到场率", "84.2%", "↓ 1.8%", "negative"], ["平均招聘周期", "23.6 天", "缩短 4.2 天", "positive"], ["AI 判断一致性", "86.7%", "↑ 5.4%", "positive"]].map(([label, value, change, tone]) => <div key={label}><span>{label}</span><strong>{value}</strong><em className={tone}>{change}</em></div>)}</div>
+      <div className="report-grid">
+        <article className="trend-card"><div className="panel-title"><div><span>近 8 周趋势</span><strong>简历量与转化效率</strong></div><select><option>全部岗位</option></select></div><div className="chart-area"><div className="y-labels"><span>240</span><span>180</span><span>120</span><span>60</span><span>0</span></div><div className="bar-chart">{[112, 138, 126, 169, 151, 194, 176, 218].map((height, index) => <div key={index}><i style={{ height: `${height * .55}px` }}><em style={{ height: `${height * .26}px` }} /></i><span>W{index + 1}</span></div>)}</div></div><div className="chart-legend"><span><i className="purple" />新增简历</span><span><i className="green" />复筛通过</span></div></article>
+        <article className="channel-card"><div className="panel-title"><div><span>渠道质量</span><strong>简历量 / 复筛通过</strong></div><button>本月 ▾</button></div><div className="channel-list">{channels.map(([name, total, pass]) => <div key={name}><span>{name}</span><i><em style={{ width: `${Number(total)}%` }} /><b style={{ width: `${Number(pass)}%` }} /></i><strong>{total}</strong><small>{pass} 人通过</small></div>)}</div></article>
+        <article className="accuracy-card"><div><span>AI 筛选准确率参考</span><strong>86.7<small>%</small></strong><em>基于 124 次人工复筛反馈</em></div><div className="accuracy-ring"><i /><span>目标<br /><b>≥80%</b></span></div><p><i>✓</i>高于验收标准 6.7 个百分点</p></article>
+        <article className="bottleneck-card"><div className="panel-title"><div><span>流程洞察</span><strong>本周需要关注</strong></div></div><ul><li><i className="amber">!</i><span><strong>高级产品经理复筛积压</strong><small>8 人等待超过 24 小时</small></span><button onClick={() => notify("已生成催办提醒")}>催办</button></li><li><i className="green">↑</i><span><strong>内推渠道质量最佳</strong><small>复筛通过率达到 64.6%</small></span></li><li><i className="purple">✦</i><span><strong>AI 一致性持续提升</strong><small>较上月提高 5.4%</small></span></li></ul></article>
+      </div>
+    </div>
+  );
+}
+
+function ModuleView(props: ModuleProps) {
+  if (props.active === "jobs") return <JobsPanel notify={props.notify} />;
+  if (props.active === "resumes") return <ResumesPanel notify={props.notify} runBatch={props.runBatch} batchRunning={props.batchRunning} />;
+  if (props.active === "candidates") return <CandidatesPanel setSelected={props.setSelected} notify={props.notify} />;
+  if (props.active === "interviews") return <InterviewsPanel notify={props.notify} setSelected={props.setSelected} />;
+  if (props.active === "talent") return <TalentPanel setSelected={props.setSelected} notify={props.notify} />;
+  return <ReportsPanel notify={props.notify} />;
+}
+
 export default function Home() {
   const [active, setActive] = useState("overview");
   const [selected, setSelected] = useState<Candidate | null>(null);
@@ -149,6 +417,8 @@ export default function Home() {
     }, 1600);
   };
 
+  const activeLabel = navItems.find((item) => item[0] === active)?.[1] ?? "工作台";
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -165,7 +435,7 @@ export default function Home() {
               className={active === id ? "active" : ""}
               onClick={() => {
                 setActive(id);
-                if (id !== "overview") notify(`${label}模块已切换，当前展示概览数据`);
+                window.scrollTo({ top: 0, behavior: "smooth" });
               }}
             >
               <span className="nav-icon">{icon}</span>{label}
@@ -188,8 +458,8 @@ export default function Home() {
       <main>
         <header className="topbar">
           <div>
-            <h1>下午好，嘉琪</h1>
-            <p>今天有 <strong>12 项</strong> 招聘任务需要关注</p>
+            <h1>{active === "overview" ? "下午好，嘉琪" : activeLabel}</h1>
+            <p>{active === "overview" ? <>今天有 <strong>12 项</strong> 招聘任务需要关注</> : "WorkBuddy 招聘流水线 · 数据更新于 13:42"}</p>
           </div>
           <div className="top-actions">
             <label className="search">
@@ -205,17 +475,7 @@ export default function Home() {
         </header>
 
         <div className="content">
-          {active !== "overview" && (
-            <div className="section-banner">
-              <div>
-                <span>模块视图</span>
-                <h2>{navItems.find((item) => item[0] === active)?.[1]}</h2>
-                <p>相关业务数据已按当前权限汇总，完整工作流可从候选人列表继续操作。</p>
-              </div>
-              <button onClick={() => setActive("overview")}>返回工作台</button>
-            </div>
-          )}
-
+          {active === "overview" ? <>
           <section className="hero-grid">
             <article className="focus-card">
               <div className="eyebrow"><span /> 今日重点</div>
@@ -349,6 +609,15 @@ export default function Home() {
               ))}
             </div>
           </section>
+          </> : (
+            <ModuleView
+              active={active}
+              notify={notify}
+              runBatch={runBatch}
+              batchRunning={batchRunning}
+              setSelected={setSelected}
+            />
+          )}
         </div>
       </main>
 
