@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 type Candidate = {
+  id: string;
   name: string;
   initials: string;
   role: string;
@@ -25,6 +26,7 @@ type WorkflowModal = {
 
 const candidates: Candidate[] = [
   {
+    id: "candidate-linxu",
     name: "林栩",
     initials: "LX",
     role: "高级产品经理",
@@ -40,6 +42,7 @@ const candidates: Candidate[] = [
     risk: "近两年有 2 次工作变动，需确认职业稳定性。",
   },
   {
+    id: "candidate-zhouyue",
     name: "周玥",
     initials: "ZY",
     role: "用户增长专家",
@@ -55,6 +58,7 @@ const candidates: Candidate[] = [
     risk: "期望薪资接近岗位预算上限。",
   },
   {
+    id: "candidate-chenmo",
     name: "陈默",
     initials: "CM",
     role: "高级产品经理",
@@ -70,6 +74,7 @@ const candidates: Candidate[] = [
     risk: "管理经验弱于岗位偏好，需要重点验证影响力。",
   },
   {
+    id: "candidate-fangqing",
     name: "方清",
     initials: "FQ",
     role: "招聘运营经理",
@@ -85,6 +90,7 @@ const candidates: Candidate[] = [
     risk: "缺少千人以上组织的项目经验。",
   },
   {
+    id: "candidate-xuzhiyuan",
     name: "许知远",
     initials: "XZY",
     role: "用户增长专家",
@@ -100,6 +106,16 @@ const candidates: Candidate[] = [
     risk: "策略深度与实验设计经验未达到当前职级要求。",
   },
 ];
+
+function relativeUpdateLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+  if (minutes < 2) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} 小时前`;
+  return `${Math.round(minutes / 1440)} 天前`;
+}
 
 const navItems = [
   ["overview", "工作台", "⌂"],
@@ -415,6 +431,7 @@ export default function Home() {
   const [filter, setFilter] = useState("全部");
   const [viewerRole, setViewerRole] = useState("HR 负责人");
   const [hydrated, setHydrated] = useState(false);
+  const [dataSource, setDataSource] = useState<"syncing" | "cloud" | "demo">("syncing");
   const [activityLog, setActivityLog] = useState<string[]>([
     "系统完成 18 份简历初筛",
     "林栩的面试资料包已生成",
@@ -424,21 +441,45 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem("workbuddy-demo-candidates");
       const storedRole = window.localStorage.getItem("workbuddy-demo-role");
-      if (stored) setCandidateData(JSON.parse(stored) as Candidate[]);
       if (storedRole) setViewerRole(storedRole);
     } catch {
-      // Keep the built-in demo records when local state cannot be read.
+      // Keep the default role when local preferences cannot be read.
     }
     setHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem("workbuddy-demo-candidates", JSON.stringify(candidateData));
     window.localStorage.setItem("workbuddy-demo-role", viewerRole);
-  }, [candidateData, viewerRole, hydrated]);
+  }, [viewerRole, hydrated]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadLedger = async () => {
+      try {
+        const response = await fetch("/api/candidates", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("台账读取失败");
+        const payload = (await response.json()) as {
+          candidates: Candidate[];
+          activity: string[];
+        };
+        setCandidateData(payload.candidates.map((candidate) => ({
+          ...candidate,
+          updated: relativeUpdateLabel(candidate.updated),
+        })));
+        if (payload.activity.length) setActivityLog(payload.activity);
+        setDataSource("cloud");
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") setDataSource("demo");
+      }
+    };
+    void loadLedger();
+    return () => controller.abort();
+  }, []);
 
   const visibleCandidates = useMemo(() => {
     if (filter === "全部") return candidateData;
@@ -464,12 +505,26 @@ export default function Home() {
     setActivityLog((current) => [message, ...current].slice(0, 8));
   };
 
-  const updateCandidateStatus = (candidate: Candidate, status: string, message: string) => {
+  const updateCandidateStatus = async (candidate: Candidate, status: string, message: string) => {
     const updated = { ...candidate, status, updated: "刚刚" };
     setCandidateData((current) => current.map((item) => item.name === candidate.name ? updated : item));
     setSelected(updated);
     addActivity(message);
     notify(message);
+    if (dataSource !== "cloud") return;
+
+    try {
+      const response = await fetch("/api/candidates", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: candidate.id, status }),
+      });
+      if (!response.ok) throw new Error("状态保存失败");
+    } catch {
+      setCandidateData((current) => current.map((item) => item.id === candidate.id ? candidate : item));
+      setSelected(candidate);
+      notify("状态未能保存，请稍后重试");
+    }
   };
 
   const startCandidateWorkflow = (candidate: Candidate) => {
@@ -537,6 +592,9 @@ export default function Home() {
             <p>{active === "overview" ? <>今天有 <strong>12 项</strong> 招聘任务需要关注</> : "WorkBuddy 招聘流水线 · 数据更新于 13:42"}</p>
           </div>
           <div className="top-actions">
+            <span className={`data-source ${dataSource}`}>
+              <i />{dataSource === "cloud" ? "数据已同步" : dataSource === "syncing" ? "正在同步" : "演示数据"}
+            </span>
             <label className="role-switch">
               <span>视角</span>
               <select value={viewerRole} onChange={(event) => {

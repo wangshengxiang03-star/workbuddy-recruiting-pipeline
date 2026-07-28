@@ -1,4 +1,45 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const candidates = sqliteTable("candidates", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  initials: text("initials").notNull(),
+  role: text("role").notNull(),
+  score: integer("score").notNull(),
+  status: text("status").notNull(),
+  tone: text("tone").notNull(),
+  school: text("school").notNull(),
+  company: text("company").notNull(),
+  experience: text("experience").notNull(),
+  channel: text("channel").notNull(),
+  highlights: text("highlights", { mode: "json" }).$type<string[]>().notNull(),
+  risk: text("risk").notNull(),
+  ownerEmail: text("owner_email"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const jobs = sqliteTable("jobs", {
+  id: text("id").primaryKey(),
+  role: text("role").notNull(),
+  department: text("department").notNull(),
+  version: integer("version").notNull(),
+  owner: text("owner").notNull(),
+  headcount: integer("headcount").notNull(),
+  filledHeadcount: integer("filled_headcount").notNull().default(0),
+  gates: text("gates", { mode: "json" }).$type<string[]>().notNull(),
+  weights: text("weights", { mode: "json" })
+    .$type<Array<[string, number]>>()
+    .notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const activityLogs = sqliteTable("activity_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  candidateId: text("candidate_id"),
+  action: text("action").notNull(),
+  actorEmail: text("actor_email"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
