@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Candidate = {
   name: string;
@@ -17,6 +17,11 @@ type Candidate = {
   highlights: string[];
   risk: string;
 };
+
+type WorkflowModal = {
+  type: "invite" | "schedule" | "package";
+  candidate: Candidate;
+} | null;
 
 const candidates: Candidate[] = [
   {
@@ -127,6 +132,7 @@ type ModuleProps = {
   runBatch: () => void;
   batchRunning: boolean;
   setSelected: (candidate: Candidate | null) => void;
+  candidateData: Candidate[];
 };
 
 const standards = [
@@ -241,14 +247,23 @@ function JobsPanel({ notify }: Pick<ModuleProps, "notify">) {
 }
 
 function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "notify" | "runBatch" | "batchRunning">) {
-  const queue = [
+  const [localFiles, setLocalFiles] = useState<string[]>([]);
+  const queue: string[][] = [
     ["林栩-高级产品经理.pdf", "高级产品经理", "已完成", "92", "强推荐"],
     ["周玥_增长专家.docx", "用户增长专家", "已完成", "86", "强推荐"],
     ["陈默简历.pdf", "高级产品经理", "待复筛", "78", "可面试"],
     ["方清.png", "招聘运营经理", "OCR 识别", "—", "处理中"],
     ["李文浩.pdf", "高级产品经理", "重复投递", "—", "已跳过"],
     ["赵岚-增长.pdf", "用户增长专家", "硬门槛淘汰", "32", "经验不足"],
+    ...localFiles.map((name) => [name, "待识别岗位", batchRunning ? "文本解析" : "待处理", "—", batchRunning ? "处理中" : "等待"]),
   ];
+  const handleLocalFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    const names = Array.from(files).map((file) => file.name);
+    setLocalFiles((current) => [...current, ...names]);
+    notify(`已在本地加入 ${names.length} 份简历，未上传文件内容`);
+    runBatch();
+  };
   return (
     <div className="module-page">
       <ModuleHeader
@@ -284,22 +299,22 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
               <span><i>{file.endsWith(".png") ? "IMG" : file.endsWith(".docx") ? "DOC" : "PDF"}</i><b>{file}</b></span><span>{role}</span><span><em className={state === "已完成" ? "success" : state.includes("淘汰") || state.includes("重复") ? "muted" : "working"}>{state}</em></span><span><strong>{score}</strong></span><span>{result}<b>→</b></span>
             </button>)}
           </div>
-          <div className="drop-zone" onClick={runBatch}><i>↥</i><span><strong>继续添加简历</strong><small>支持一次处理 100 份以上，单个文件不超过 20MB</small></span><button>浏览文件</button></div>
+          <label className="drop-zone"><input type="file" multiple accept=".pdf,.doc,.docx,image/*" onChange={(event) => handleLocalFiles(event.target.files)} /><i>↥</i><span><strong>继续添加简历</strong><small>仅在本地读取文件名进行演示，不上传文件内容</small></span><b>浏览文件</b></label>
         </div>
       </div>
     </div>
   );
 }
 
-function CandidatesPanel({ setSelected, notify }: Pick<ModuleProps, "setSelected" | "notify">) {
+function CandidatesPanel({ setSelected, notify, candidateData }: Pick<ModuleProps, "setSelected" | "notify" | "candidateData">) {
   const [candidateFilter, setCandidateFilter] = useState("全部");
-  const list = candidateFilter === "全部" ? candidates : candidates.filter((item) => item.status === candidateFilter);
+  const list = candidateFilter === "全部" ? candidateData : candidateData.filter((item) => item.status === candidateFilter);
   return (
     <div className="module-page">
       <ModuleHeader eyebrow="CANDIDATE LEDGER" title="候选人总台账" description="集中追踪候选人从入库、筛选、面试到归档的完整状态和每次处理记录。" action="导入候选人" onAction={() => notify("已打开候选人导入向导")} />
       <div className="ledger-toolbar">
         <label><span>⌕</span><input placeholder="搜索姓名、公司、技能…" aria-label="搜索候选人" /></label>
-        <div>{["全部", "强推荐", "待复筛", "可面试", "人才储备"].map((item) => <button className={candidateFilter === item ? "active" : ""} key={item} onClick={() => setCandidateFilter(item)}>{item}</button>)}</div>
+        <div>{["全部", "强推荐", "待复筛", "可面试", "复筛通过", "已邀约", "已确认面试", "资料已就绪"].map((item) => <button className={candidateFilter === item ? "active" : ""} key={item} onClick={() => setCandidateFilter(item)}>{item}</button>)}</div>
         <button onClick={() => notify("已打开高级筛选")}>筛选 ▾</button>
       </div>
       <div className="candidate-table full-ledger">
@@ -317,7 +332,7 @@ function CandidatesPanel({ setSelected, notify }: Pick<ModuleProps, "setSelected
   );
 }
 
-function InterviewsPanel({ notify, setSelected }: Pick<ModuleProps, "notify" | "setSelected">) {
+function InterviewsPanel({ notify, setSelected, candidateData }: Pick<ModuleProps, "notify" | "setSelected" | "candidateData">) {
   const [view, setView] = useState("日程");
   const events = [
     { time: "10:00", name: "林栩", role: "高级产品经理", interviewer: "刘明 · 业务一面", form: "腾讯会议", ready: true },
@@ -334,7 +349,7 @@ function InterviewsPanel({ notify, setSelected }: Pick<ModuleProps, "notify" | "
             <div className="date-column"><strong>28</strong><span>JUL</span><i /></div>
             <div className="event-list">{events.map((event, index) => <article className="event-card" key={event.time}>
               <time>{event.time}<small>60 min</small></time><div className="event-main"><span>{event.role}</span><h3>{event.name}</h3><p>{event.interviewer}　·　{event.form}</p></div>
-              <div className="event-status"><b className={event.ready ? "ready" : "pending"}>{event.ready ? "资料已就绪" : "资料待确认"}</b><button onClick={() => { const found = candidates.find((candidate) => candidate.name === event.name); if (found) setSelected(found); else notify(`${event.name}的资料包正在生成`); }}>查看详情 →</button></div>
+              <div className="event-status"><b className={event.ready ? "ready" : "pending"}>{event.ready ? "资料已就绪" : "资料待确认"}</b><button onClick={() => { const found = candidateData.find((candidate) => candidate.name === event.name); if (found) setSelected(found); else notify(`${event.name}的资料包正在生成`); }}>查看详情 →</button></div>
               {index === 1 && <div className="now-line"><i />当前 13:42</div>}
             </article>)}</div>
           </div>
@@ -351,14 +366,14 @@ function InterviewsPanel({ notify, setSelected }: Pick<ModuleProps, "notify" | "
   );
 }
 
-function TalentPanel({ setSelected, notify }: Pick<ModuleProps, "setSelected" | "notify">) {
+function TalentPanel({ setSelected, notify, candidateData }: Pick<ModuleProps, "setSelected" | "notify" | "candidateData">) {
   return (
     <div className="module-page">
       <ModuleHeader eyebrow="TALENT COMMUNITY" title="优质人才池" description="沉淀暂未录用但具备长期价值的人才，按岗位族、技能标签和联系状态持续运营。" action="新建人才分组" onAction={() => notify("已创建空白人才分组")} />
       <div className="talent-groups">{[["产品与策略人才", "38", "12 人近 90 天有互动", "violet"], ["增长与市场人才", "27", "8 人匹配当前岗位", "green"], ["HR 专业人才", "16", "5 人可优先联系", "orange"]].map(([title, count, note, tone]) => <button key={title} onClick={() => notify(`已打开${title}`)}><i className={tone}>♧</i><span><strong>{title}</strong><small>{note}</small></span><b>{count}</b><em>→</em></button>)}</div>
       <div className="talent-content">
         <div className="panel-title"><div><span>最近入池</span><strong>值得持续关注的候选人</strong></div><button onClick={() => notify("已按最近联系时间排序")}>最近联系 ▾</button></div>
-        <div className="talent-card-grid">{candidates.filter((candidate) => candidate.score >= 56).map((candidate) => <button key={candidate.name} onClick={() => setSelected(candidate)}><div className={`large-avatar ${candidate.tone}`}>{candidate.initials}</div><span><strong>{candidate.name}</strong><small>{candidate.company}</small></span><em>{candidate.role.replace("高级", "")}</em><p>{candidate.highlights[0]}</p><div><b>上次联系 {candidate.updated}</b><i>查看画像 →</i></div></button>)}</div>
+        <div className="talent-card-grid">{candidateData.filter((candidate) => candidate.score >= 56).map((candidate) => <button key={candidate.name} onClick={() => setSelected(candidate)}><div className={`large-avatar ${candidate.tone}`}>{candidate.initials}</div><span><strong>{candidate.name}</strong><small>{candidate.company}</small></span><em>{candidate.role.replace("高级", "")}</em><p>{candidate.highlights[0]}</p><div><b>上次联系 {candidate.updated}</b><i>查看画像 →</i></div></button>)}</div>
       </div>
     </div>
   );
@@ -383,24 +398,52 @@ function ReportsPanel({ notify }: Pick<ModuleProps, "notify">) {
 function ModuleView(props: ModuleProps) {
   if (props.active === "jobs") return <JobsPanel notify={props.notify} />;
   if (props.active === "resumes") return <ResumesPanel notify={props.notify} runBatch={props.runBatch} batchRunning={props.batchRunning} />;
-  if (props.active === "candidates") return <CandidatesPanel setSelected={props.setSelected} notify={props.notify} />;
-  if (props.active === "interviews") return <InterviewsPanel notify={props.notify} setSelected={props.setSelected} />;
-  if (props.active === "talent") return <TalentPanel setSelected={props.setSelected} notify={props.notify} />;
+  if (props.active === "candidates") return <CandidatesPanel setSelected={props.setSelected} notify={props.notify} candidateData={props.candidateData} />;
+  if (props.active === "interviews") return <InterviewsPanel notify={props.notify} setSelected={props.setSelected} candidateData={props.candidateData} />;
+  if (props.active === "talent") return <TalentPanel setSelected={props.setSelected} notify={props.notify} candidateData={props.candidateData} />;
   return <ReportsPanel notify={props.notify} />;
 }
 
 export default function Home() {
   const [active, setActive] = useState("overview");
   const [selected, setSelected] = useState<Candidate | null>(null);
+  const [candidateData, setCandidateData] = useState<Candidate[]>(candidates);
+  const [workflowModal, setWorkflowModal] = useState<WorkflowModal>(null);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchDone, setBatchDone] = useState(false);
   const [toast, setToast] = useState("");
   const [filter, setFilter] = useState("全部");
+  const [viewerRole, setViewerRole] = useState("HR 负责人");
+  const [hydrated, setHydrated] = useState(false);
+  const [activityLog, setActivityLog] = useState<string[]>([
+    "系统完成 18 份简历初筛",
+    "林栩的面试资料包已生成",
+    "6 位候选人状态已同步",
+    "本周招聘看板已更新",
+  ]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("workbuddy-demo-candidates");
+      const storedRole = window.localStorage.getItem("workbuddy-demo-role");
+      if (stored) setCandidateData(JSON.parse(stored) as Candidate[]);
+      if (storedRole) setViewerRole(storedRole);
+    } catch {
+      // Keep the built-in demo records when local state cannot be read.
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem("workbuddy-demo-candidates", JSON.stringify(candidateData));
+    window.localStorage.setItem("workbuddy-demo-role", viewerRole);
+  }, [candidateData, viewerRole, hydrated]);
 
   const visibleCandidates = useMemo(() => {
-    if (filter === "全部") return candidates;
-    return candidates.filter((candidate) => candidate.status === filter);
-  }, [filter]);
+    if (filter === "全部") return candidateData;
+    return candidateData.filter((candidate) => candidate.status === filter);
+  }, [candidateData, filter]);
 
   const notify = (message: string) => {
     setToast(message);
@@ -415,6 +458,38 @@ export default function Home() {
       setBatchDone(true);
       notify("18 份新增简历已完成解析与初筛");
     }, 1600);
+  };
+
+  const addActivity = (message: string) => {
+    setActivityLog((current) => [message, ...current].slice(0, 8));
+  };
+
+  const updateCandidateStatus = (candidate: Candidate, status: string, message: string) => {
+    const updated = { ...candidate, status, updated: "刚刚" };
+    setCandidateData((current) => current.map((item) => item.name === candidate.name ? updated : item));
+    setSelected(updated);
+    addActivity(message);
+    notify(message);
+  };
+
+  const startCandidateWorkflow = (candidate: Candidate) => {
+    if (["强推荐", "待复筛", "可面试", "人才储备"].includes(candidate.status)) {
+      setWorkflowModal({ type: "invite", candidate });
+      return;
+    }
+    if (candidate.status === "复筛通过" || candidate.status === "已邀约") {
+      setWorkflowModal({ type: "schedule", candidate });
+      return;
+    }
+    setWorkflowModal({ type: "package", candidate });
+  };
+
+  const workflowActionLabel = (status: string) => {
+    if (["强推荐", "待复筛", "可面试", "人才储备"].includes(status)) return "复筛通过并生成邀约";
+    if (status === "复筛通过") return "发送邀约并安排面试";
+    if (status === "已邀约") return "确认面试安排";
+    if (status === "已确认面试") return "生成面试资料包";
+    return "重新生成资料包";
   };
 
   const activeLabel = navItems.find((item) => item[0] === active)?.[1] ?? "工作台";
@@ -462,6 +537,16 @@ export default function Home() {
             <p>{active === "overview" ? <>今天有 <strong>12 项</strong> 招聘任务需要关注</> : "WorkBuddy 招聘流水线 · 数据更新于 13:42"}</p>
           </div>
           <div className="top-actions">
+            <label className="role-switch">
+              <span>视角</span>
+              <select value={viewerRole} onChange={(event) => {
+                setViewerRole(event.target.value);
+                notify(`已切换为${event.target.value}视角`);
+              }}>
+                <option>HR 负责人</option>
+                <option>用人经理</option>
+              </select>
+            </label>
             <label className="search">
               <span>⌕</span>
               <input aria-label="全局搜索" placeholder="搜索候选人、岗位…" />
@@ -599,13 +684,10 @@ export default function Home() {
               <button onClick={() => notify("自动化日志已全部读取")}>查看运行日志 <span>→</span></button>
             </div>
             <div className="activity-strip">
-              {[
-                ["✓", "完成 18 份简历初筛", "2 分钟前", "green"],
-                ["✦", "生成林栩面试资料包", "18 分钟前", "purple"],
-                ["↗", "同步 6 位候选人状态", "34 分钟前", "blue"],
-                ["⌁", "更新本周招聘看板", "1 小时前", "amber"],
-              ].map(([icon, text, time, tone]) => (
-                <div key={text}><i className={tone}>{icon}</i><span><strong>{text}</strong><small>{time}</small></span></div>
+              {activityLog.slice(0, 4).map((text, index) => (
+                <div key={`${text}-${index}`}><i className={["green", "purple", "blue", "amber"][index]}>{
+                  ["✓", "✦", "↗", "⌁"][index]
+                }</i><span><strong>{text}</strong><small>{index === 0 ? "刚刚" : `${index * 16 + 2} 分钟前`}</small></span></div>
               ))}
             </div>
           </section>
@@ -616,6 +698,7 @@ export default function Home() {
               runBatch={runBatch}
               batchRunning={batchRunning}
               setSelected={setSelected}
+              candidateData={candidateData}
             />
           )}
         </div>
@@ -659,11 +742,68 @@ export default function Home() {
               <div><b>定制面试题（12 题）</b><em>已生成</em></div>
               <div><b>标准评价表</b><em>已生成</em></div>
             </div>
+            <div className="drawer-section workflow-timeline">
+              <h3>流程轨迹</h3>
+              {[
+                ["简历入库并完成初筛", "今天 10:12"],
+                [selected.score >= 80 ? "AI 判定为强推荐" : "AI 完成匹配度评分", "今天 10:13"],
+                [selected.status, selected.updated],
+              ].map(([event, time], index) => <div key={`${event}-${index}`}><i>{index === 2 ? "●" : "✓"}</i><span><strong>{event}</strong><small>{time}</small></span></div>)}
+            </div>
             <div className="drawer-actions">
               <button onClick={() => notify("已打开完整面试资料包")}>查看资料包</button>
-              <button className="primary" onClick={() => notify(`已将 ${selected.name} 标记为复筛通过并生成邀约话术`)}>复筛通过</button>
+              <button className="primary" onClick={() => startCandidateWorkflow(selected)}>{workflowActionLabel(selected.status)}</button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {workflowModal && (
+        <div className="modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setWorkflowModal(null);
+        }}>
+          <section className="workflow-modal" role="dialog" aria-modal="true" aria-label="候选人流程操作">
+            <div className="modal-head">
+              <div><span>WORKBUDDY AUTOMATION</span><h2>{workflowModal.type === "invite" ? "确认邀约内容" : workflowModal.type === "schedule" ? "确认面试安排" : "生成面试资料包"}</h2><p>{workflowModal.candidate.name} · {workflowModal.candidate.role}</p></div>
+              <button aria-label="关闭" onClick={() => setWorkflowModal(null)}>×</button>
+            </div>
+            {workflowModal.type === "invite" && (
+              <div className="invite-editor">
+                <div className="invite-tabs"><button className="active">邮件正式版</button><button>即时通讯版</button><span>AI 已结合候选人经历个性化生成</span></div>
+                <label>邮件主题<input defaultValue={`【面试邀请】${workflowModal.candidate.role} - WorkBuddy`} /></label>
+                <label>邀约正文<textarea rows={8} defaultValue={`${workflowModal.candidate.name}，您好：\n\n感谢您关注我们的「${workflowModal.candidate.role}」岗位。您的${workflowModal.candidate.highlights[0]}经历与岗位需求非常匹配，我们诚邀您参加业务面试。\n\n面试形式：线上视频面试\n可选时间：7 月 30 日 10:00 / 14:30\n联系人：王嘉琪\n\n期待与您交流。`} /></label>
+                <div className="message-check"><i>✓</i><span><strong>隐私与信息检查通过</strong><small>岗位、时间、面试形式与联系人信息完整</small></span></div>
+              </div>
+            )}
+            {workflowModal.type === "schedule" && (
+              <div className="schedule-form">
+                <label>面试日期<input type="date" defaultValue="2026-07-30" /></label>
+                <label>开始时间<select defaultValue="14:30"><option>10:00</option><option>14:30</option><option>16:00</option></select></label>
+                <label>面试形式<select defaultValue="腾讯会议"><option>腾讯会议</option><option>飞书会议</option><option>线下面试</option></select></label>
+                <label>面试官<select defaultValue="刘明 · 产品负责人"><option>刘明 · 产品负责人</option><option>孟玮 · 增长负责人</option><option>王嘉琪 · 招聘负责人</option></select></label>
+                <div className="schedule-summary"><i>▣</i><span><strong>面试前 2 小时自动提醒</strong><small>将同时通知候选人、面试官和负责 HR，并附带资料包路径。</small></span></div>
+              </div>
+            )}
+            {workflowModal.type === "package" && (
+              <div className="package-builder">
+                {[["候选人一页纸画像", "核心信息、匹配点、业绩亮点、风险方向", "已生成"], ["定制化面试题库", "动机、专业、简历深挖、软素质共 12 题", "已生成"], ["岗位面试评价表", "4 项能力维度、分项评分与综合评价", "已生成"]].map(([title, desc, state], index) => <div key={title}><i>{index + 1}</i><span><strong>{title}</strong><small>{desc}</small></span><em>{state}</em></div>)}
+                <div className="package-path"><span>归档位置</span><code>/招聘流水线/{workflowModal.candidate.role}/面试资料/{workflowModal.candidate.name}/</code></div>
+              </div>
+            )}
+            <div className="modal-actions">
+              <button onClick={() => setWorkflowModal(null)}>取消</button>
+              <button className="primary" onClick={() => {
+                if (workflowModal.type === "invite") {
+                  updateCandidateStatus(workflowModal.candidate, "已邀约", `${workflowModal.candidate.name}已复筛通过，邀约内容已保存`);
+                } else if (workflowModal.type === "schedule") {
+                  updateCandidateStatus(workflowModal.candidate, "已确认面试", `${workflowModal.candidate.name}已确认 7 月 30 日面试`);
+                } else {
+                  updateCandidateStatus(workflowModal.candidate, "资料已就绪", `${workflowModal.candidate.name}的面试资料包已生成`);
+                }
+                setWorkflowModal(null);
+              }}>{workflowModal.type === "invite" ? "保存并标记已邀约" : workflowModal.type === "schedule" ? "确认安排并生成资料" : "确认归档资料包"}</button>
+            </div>
+          </section>
         </div>
       )}
 
