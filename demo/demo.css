@@ -1,0 +1,31 @@
+.demo-notice {
+  align-items: center;
+  background: #171a2b;
+  color: #fff;
+  display: flex;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  gap: 12px;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 20px;
+  position: relative;
+  z-index: 100;
+}
+
+.demo-notice strong {
+  background: #7569ff;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  padding: 4px 9px;
+}
+
+@media (max-width: 720px) {
+  .demo-notice {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    padding: 9px 14px;
+  }
+}
