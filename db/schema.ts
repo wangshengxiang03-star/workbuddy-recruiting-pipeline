@@ -28,6 +28,9 @@ export const jobs = sqliteTable("jobs", {
   role: text("role").notNull(),
   department: text("department").notNull(),
   jdText: text("jd_text").notNull().default(""),
+  supplementalRequirements: text("supplemental_requirements").notNull().default(""),
+  candidateProfile: text("candidate_profile", { mode: "json" })
+    .$type<Record<string, unknown> | null>(),
   version: integer("version").notNull(),
   owner: text("owner").notNull(),
   headcount: integer("headcount").notNull(),

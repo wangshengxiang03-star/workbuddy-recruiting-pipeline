@@ -8,6 +8,7 @@ import {
   deriveCandidateProfile,
   deriveInterviewQuestions,
 } from "../../lib/job-analysis";
+import type { CandidateProfile } from "../../lib/job-analysis";
 
 export const runtime = "edge";
 
@@ -23,9 +24,12 @@ type JobPayload = {
   weights?: Array<[string, number]>;
   interviewDimensions?: string[];
   status?: string;
+  candidateProfile?: CandidateProfile;
+  regenerateProfile?: boolean;
 };
 
 function serializeJob(job: Awaited<ReturnType<typeof listJobs>>[number]) {
+  const generatedProfile = deriveCandidateProfile(job);
   return {
     ...job,
     interviewDimensions: job.interviewDimensions.length
@@ -35,7 +39,10 @@ function serializeJob(job: Awaited<ReturnType<typeof listJobs>>[number]) {
     version: `v${job.version}`,
     updatedAt: job.updatedAt.toISOString(),
     createdAt: job.createdAt.toISOString(),
-    candidateProfile: deriveCandidateProfile(job),
+    candidateProfile:
+      job.candidateProfile && Object.keys(job.candidateProfile).length
+        ? { ...generatedProfile, ...job.candidateProfile }
+        : generatedProfile,
     interviewQuestions: deriveInterviewQuestions(job),
   };
 }
@@ -106,10 +113,19 @@ export async function POST(request: Request) {
 
   const user = await getChatGPTUser();
   const standard = deriveStandard(body);
+  const profile = deriveCandidateProfile({
+    role: body.role.trim(),
+    department: body.department.trim(),
+    jdText: body.jdText.trim(),
+    supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
+    ...standard,
+  });
   const created = await createJobStandard({
     role: body.role.trim(),
     department: body.department.trim(),
     jdText: body.jdText.trim(),
+    supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
+    candidateProfile: profile,
     owner: body.owner?.trim() || user?.displayName || user?.email || "招聘负责人",
     headcount,
     ...standard,
@@ -128,18 +144,70 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "评分权重合计必须为 100%" }, { status: 400 });
     }
   }
+  const current = (await listJobs()).find((job) => job.id === body.id);
+  if (!current) {
+    return Response.json({ error: "岗位不存在" }, { status: 404 });
+  }
+
+  const nextRole = body.role?.trim() || current.role;
+  const nextDepartment = body.department?.trim() || current.department;
+  const nextJd = typeof body.jdText === "string" ? body.jdText.trim() : current.jdText;
+  const nextSupplemental =
+    typeof body.supplementalRequirements === "string"
+      ? body.supplementalRequirements.trim()
+      : current.supplementalRequirements;
+  if (body.regenerateProfile && (!nextRole || !nextDepartment || !nextJd)) {
+    return Response.json(
+      { error: "重新分析前请补全岗位名称、所属部门和 JD" },
+      { status: 400 },
+    );
+  }
+  const nextStandard = body.regenerateProfile
+    ? deriveStandard({
+        ...body,
+        role: nextRole,
+        department: nextDepartment,
+        jdText: nextJd,
+        supplementalRequirements: nextSupplemental,
+      })
+    : null;
+  const regeneratedProfile = nextStandard
+    ? deriveCandidateProfile({
+        role: nextRole,
+        department: nextDepartment,
+        jdText: nextJd,
+        supplementalRequirements: nextSupplemental,
+        ...nextStandard,
+      })
+    : null;
+
   const updated = await updateJobStandard(body.id, {
     ...(body.role ? { role: body.role.trim() } : {}),
     ...(body.department ? { department: body.department.trim() } : {}),
     ...(typeof body.jdText === "string" ? { jdText: body.jdText.trim() } : {}),
+    ...(typeof body.supplementalRequirements === "string"
+      ? { supplementalRequirements: body.supplementalRequirements.trim() }
+      : {}),
     ...(body.owner ? { owner: body.owner.trim() } : {}),
     ...(body.headcount ? { headcount: Number(body.headcount) } : {}),
-    ...(body.gates ? { gates: body.gates.filter(Boolean) } : {}),
-    ...(body.weights ? { weights: body.weights } : {}),
-    ...(body.interviewDimensions
+    ...(nextStandard
+      ? {
+          gates: nextStandard.gates,
+          weights: nextStandard.weights,
+          interviewDimensions: nextStandard.interviewDimensions,
+        }
+      : {}),
+    ...(!nextStandard && body.gates ? { gates: body.gates.filter(Boolean) } : {}),
+    ...(!nextStandard && body.weights ? { weights: body.weights } : {}),
+    ...(!nextStandard && body.interviewDimensions
       ? { interviewDimensions: body.interviewDimensions.filter(Boolean) }
       : {}),
     ...(body.status ? { status: body.status } : {}),
+    ...(regeneratedProfile
+      ? { candidateProfile: regeneratedProfile }
+      : body.candidateProfile
+        ? { candidateProfile: body.candidateProfile }
+        : {}),
   });
   if (!updated) {
     return Response.json({ error: "岗位不存在" }, { status: 404 });

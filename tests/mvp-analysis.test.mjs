@@ -28,6 +28,13 @@ test("derives a focused candidate profile from the JD", () => {
   assert.ok(profile.capabilities.includes("产品判断"));
   assert.ok(profile.bonusSignals.includes("有 0→1 项目经验"));
   assert.deepEqual(profile.verificationPoints, job.gates);
+  assert.match(profile.mission, /B 端 SaaS 产品规划/);
+  assert.deepEqual(profile.mustHaves, job.gates);
+  assert.ok(profile.targetTitles.includes("产品经理"));
+  assert.ok(profile.searchKeywords.includes("B 端 / 企业服务背景"));
+  assert.ok(profile.capabilityDetails.every((item) => item.why && item.evidence));
+  assert.ok(profile.redFlags.length >= 2);
+  assert.ok(profile.openQuestions.some((item) => item.includes("汇报")));
 });
 
 test("creates six structured interview questions tied to the role", () => {

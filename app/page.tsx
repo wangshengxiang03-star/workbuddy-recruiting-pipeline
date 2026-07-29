@@ -4,12 +4,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type CandidateProfile = {
   summary: string;
+  mission: string;
   experience: string;
   education: string;
+  seniority: string;
   backgrounds: string[];
   capabilities: string[];
+  capabilityDetails: Array<{
+    name: string;
+    priority: "核心" | "重要" | "辅助";
+    why: string;
+    evidence: string;
+  }>;
+  mustHaves: string[];
   bonusSignals: string[];
   verificationPoints: string[];
+  targetTitles: string[];
+  searchKeywords: string[];
+  redFlags: string[];
+  openQuestions: string[];
 };
 
 type InterviewQuestion = {
@@ -24,6 +37,7 @@ type Job = {
   role: string;
   department: string;
   jdText: string;
+  supplementalRequirements: string;
   version: string;
   owner: string;
   headcount: number;
@@ -77,6 +91,59 @@ function scoreTone(score: number | null) {
   return "reserve";
 }
 
+function lines(value: FormDataEntryValue | null) {
+  return String(value ?? "")
+    .split(/\n|；|;/)
+    .map((item) => item.replace(/^[-*•\d.\s]+/, "").trim())
+    .filter(Boolean);
+}
+
+function profileMarkdown(job: Job) {
+  const profile = job.candidateProfile;
+  const list = (items: string[]) => items.map((item) => `- ${item}`).join("\n");
+  return `# ${job.role}｜候选人画像
+
+> ${profile.summary}
+
+## 岗位使命
+${profile.mission}
+
+## 理想候选人
+- 经验：${profile.experience}
+- 学历：${profile.education}
+- 职级定位：${profile.seniority}
+
+## 必须满足
+${list(profile.mustHaves)}
+
+## 核心能力与证据
+${profile.capabilityDetails
+  .map((item) => `### ${item.name}（${item.priority}）\n- 为什么重要：${item.why}\n- 判断证据：${item.evidence}`)
+  .join("\n\n")}
+
+## 典型背景
+${list(profile.backgrounds)}
+
+## 加分信号
+${list(profile.bonusSignals)}
+
+## 推荐搜索职位
+${list(profile.targetTitles)}
+
+## 搜索关键词
+${list(profile.searchKeywords)}
+
+## 风险信号
+${list(profile.redFlags)}
+
+## 待业务确认
+${list(profile.openQuestions)}
+
+---
+岗位版本：${job.version}｜更新时间：${formatTime(job.updatedAt)}
+`;
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("profile");
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -85,7 +152,10 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showReanalyze, setShowReanalyze] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -221,6 +291,105 @@ export default function Home() {
     notify("全部面试问题已复制");
   };
 
+  const replaceJob = (job: Job) => {
+    setJobs((current) => current.map((item) => (item.id === job.id ? job : item)));
+  };
+
+  const patchJob = async (payload: Record<string, unknown>) => {
+    if (!selectedJob) throw new Error("请先选择岗位");
+    const response = await fetch("/api/jobs", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: selectedJob.id, ...payload }),
+    });
+    const result = (await response.json()) as { job?: Job; error?: string };
+    if (!response.ok || !result.job) throw new Error(result.error ?? "保存失败");
+    replaceJob(result.job);
+    return result.job;
+  };
+
+  const saveProfile = async (formData: FormData) => {
+    if (!selectedJob) return;
+    setSaving(true);
+    try {
+      const capabilityNames = lines(formData.get("capabilities"));
+      const previous = new Map(
+        selectedJob.candidateProfile.capabilityDetails.map((item) => [item.name, item]),
+      );
+      const candidateProfile: CandidateProfile = {
+        ...selectedJob.candidateProfile,
+        summary: String(formData.get("summary") ?? "").trim(),
+        mission: String(formData.get("mission") ?? "").trim(),
+        experience: String(formData.get("experience") ?? "").trim(),
+        education: String(formData.get("education") ?? "").trim(),
+        seniority: String(formData.get("seniority") ?? "").trim(),
+        backgrounds: lines(formData.get("backgrounds")),
+        capabilities: capabilityNames,
+        capabilityDetails: capabilityNames.map((name, index) =>
+          previous.get(name) ?? {
+            name,
+            priority: index < 2 ? "核心" : index < 4 ? "重要" : "辅助",
+            why: `支持候选人承担${selectedJob.role}的关键工作`,
+            evidence: "能用完整案例说明目标、方法、个人贡献和结果",
+          },
+        ),
+        mustHaves: lines(formData.get("mustHaves")),
+        verificationPoints: lines(formData.get("mustHaves")),
+        bonusSignals: lines(formData.get("bonusSignals")),
+        targetTitles: lines(formData.get("targetTitles")),
+        searchKeywords: lines(formData.get("searchKeywords")),
+        redFlags: lines(formData.get("redFlags")),
+        openQuestions: lines(formData.get("openQuestions")),
+      };
+      await patchJob({ candidateProfile });
+      setShowEditProfile(false);
+      notify("岗位画像已保存为新版本");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "画像保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reanalyzeJob = async (formData: FormData) => {
+    setSaving(true);
+    try {
+      await patchJob({
+        role: formData.get("role"),
+        department: formData.get("department"),
+        jdText: formData.get("jdText"),
+        supplementalRequirements: formData.get("supplementalRequirements"),
+        regenerateProfile: true,
+      });
+      setShowReanalyze(false);
+      notify("已根据最新 JD 重新生成岗位画像");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "重新分析失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copyProfile = async () => {
+    if (!selectedJob) return;
+    await navigator.clipboard.writeText(profileMarkdown(selectedJob));
+    notify("岗位画像已复制");
+  };
+
+  const exportProfile = () => {
+    if (!selectedJob) return;
+    const blob = new Blob([profileMarkdown(selectedJob)], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${selectedJob.role}-候选人画像.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("岗位画像文档已导出");
+  };
+
   return (
     <div className="mvp-shell">
       <aside className="mvp-sidebar">
@@ -306,6 +475,10 @@ export default function Home() {
                 <ProfileView
                   job={selectedJob}
                   onContinue={() => setView("screening")}
+                  onCopy={() => void copyProfile()}
+                  onExport={exportProfile}
+                  onEdit={() => setShowEditProfile(true)}
+                  onReanalyze={() => setShowReanalyze(true)}
                 />
               )}
               {view === "screening" && (
@@ -388,12 +561,44 @@ export default function Home() {
         </div>
       )}
 
+      {showEditProfile && selectedJob && (
+        <ProfileEditorModal
+          job={selectedJob}
+          saving={saving}
+          onClose={() => setShowEditProfile(false)}
+          onSave={saveProfile}
+        />
+      )}
+
+      {showReanalyze && selectedJob && (
+        <ReanalyzeModal
+          job={selectedJob}
+          saving={saving}
+          onClose={() => setShowReanalyze(false)}
+          onSave={reanalyzeJob}
+        />
+      )}
+
       {toast && <div className="mvp-toast"><i>✓</i>{toast}</div>}
     </div>
   );
 }
 
-function ProfileView({ job, onContinue }: { job: Job; onContinue: () => void }) {
+function ProfileView({
+  job,
+  onContinue,
+  onCopy,
+  onExport,
+  onEdit,
+  onReanalyze,
+}: {
+  job: Job;
+  onContinue: () => void;
+  onCopy: () => void;
+  onExport: () => void;
+  onEdit: () => void;
+  onReanalyze: () => void;
+}) {
   const profile = job.candidateProfile;
   return (
     <div className="profile-page">
@@ -401,15 +606,20 @@ function ProfileView({ job, onContinue }: { job: Job; onContinue: () => void }) 
         <div>
           <span>01 · CANDIDATE PERSONA</span>
           <h2>这个岗位，应该找什么样的人？</h2>
-          <p>系统根据 JD 提炼候选人的典型背景、核心能力和必须核验的条件。</p>
+          <p>把 JD 翻译成一份可用于寻访、筛选和校准招聘团队的候选人画像。</p>
         </div>
-        <button className="primary-action" onClick={onContinue}>去筛选简历 <b>→</b></button>
+        <div className="profile-actions">
+          <button onClick={onCopy}>复制画像</button>
+          <button onClick={onExport}>导出文档</button>
+          <button onClick={onEdit}>编辑画像</button>
+          <button className="primary" onClick={onReanalyze}>修改 JD / 重新分析</button>
+        </div>
       </section>
 
       <section className="profile-hero">
         <div className="role-monogram">{job.role.slice(0, 1)}</div>
         <div>
-          <span>{job.department} · {job.version}</span>
+          <span>{job.department} · {job.version} · 更新于 {formatTime(job.updatedAt)}</span>
           <h3>{job.role}</h3>
           <p>{profile.summary}</p>
         </div>
@@ -419,48 +629,186 @@ function ProfileView({ job, onContinue }: { job: Job; onContinue: () => void }) 
         </div>
       </section>
 
-      <div className="profile-grid">
-        <article className="profile-card capability-card">
-          <div className="card-heading"><i>01</i><span><strong>核心能力</strong><small>简历和面试的重点判断项</small></span></div>
-          <div className="capability-list">
-            {profile.capabilities.map((item, index) => (
-              <div key={item}>
-                <em>{String(index + 1).padStart(2, "0")}</em>
-                <strong>{item}</strong>
-                <span><i style={{ width: `${92 - index * 7}%` }} /></span>
+      <section className="profile-brief">
+        <article>
+          <span>岗位使命</span>
+          <h3>{profile.mission}</h3>
+        </article>
+        <article>
+          <span>职级定位</span>
+          <p>{profile.seniority}</p>
+        </article>
+        <article className={profile.openQuestions.length ? "needs-input" : ""}>
+          <span>画像完整度</span>
+          <strong>{profile.openQuestions.length ? `${profile.openQuestions.length} 项待确认` : "信息完整"}</strong>
+          <small>{profile.openQuestions.length ? "补齐信息后可再次分析" : "可直接用于寻访与筛选"}</small>
+        </article>
+      </section>
+
+      <div className="profile-grid profile-grid-rich">
+        <article className="profile-card must-have-card">
+          <div className="card-heading"><i>01</i><span><strong>必须满足</strong><small>不满足时原则上不进入下一轮</small></span></div>
+          <div className="must-have-list">
+            {profile.mustHaves.map((item, index) => (
+              <div key={item}><em>{index + 1}</em><span>{item}</span><b>硬条件</b></div>
+            ))}
+          </div>
+        </article>
+
+        <article className="profile-card">
+          <div className="card-heading"><i>02</i><span><strong>典型人才背景</strong><small>更可能快速进入状态</small></span></div>
+          <ul className="signal-list">
+            {profile.backgrounds.map((item) => <li key={item}><i>✓</i>{item}</li>)}
+          </ul>
+          <div className="card-subsection">
+            <strong>加分信号</strong>
+            <div className="keyword-cloud bonus">
+              {profile.bonusSignals.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          </div>
+        </article>
+
+        <article className="profile-card capability-evidence-card">
+          <div className="card-heading"><i>03</i><span><strong>核心能力与判断证据</strong><small>不只看关键词，要看真实行为和结果</small></span></div>
+          <div className="capability-evidence-list">
+            {profile.capabilityDetails.map((item, index) => (
+              <div key={`${item.name}-${index}`}>
+                <div><em>{String(index + 1).padStart(2, "0")}</em><strong>{item.name}</strong><b>{item.priority}</b></div>
+                <p>{item.why}</p>
+                <small><i>证据</i>{item.evidence}</small>
               </div>
             ))}
           </div>
         </article>
 
-        <article className="profile-card">
-          <div className="card-heading"><i>02</i><span><strong>典型背景</strong><small>更可能快速进入状态的经历</small></span></div>
-          <ul className="signal-list">
-            {profile.backgrounds.map((item) => <li key={item}><i>✓</i>{item}</li>)}
-          </ul>
-        </article>
-
-        <article className="profile-card">
-          <div className="card-heading"><i>03</i><span><strong>加分信号</strong><small>不是硬门槛，但值得优先关注</small></span></div>
-          <ul className="signal-list bonus">
-            {profile.bonusSignals.map((item) => <li key={item}><i>＋</i>{item}</li>)}
-          </ul>
-        </article>
-
-        <article className="profile-card verification-card">
-          <div className="card-heading"><i>04</i><span><strong>必须核验</strong><small>简历初筛与面试均需确认</small></span></div>
-          <div className="verification-list">
-            {profile.verificationPoints.map((item) => (
-              <div key={item}><i>!</i><span>{item}</span><em>待核验</em></div>
-            ))}
+        <article className="profile-card sourcing-card">
+          <div className="card-heading"><i>04</i><span><strong>去哪里找这类人</strong><small>可直接用于招聘网站与人才库检索</small></span></div>
+          <div className="card-subsection first">
+            <strong>目标职位名称</strong>
+            <div className="keyword-cloud">
+              {profile.targetTitles.map((item) => <span key={item}>{item}</span>)}
+            </div>
           </div>
+          <div className="card-subsection">
+            <strong>搜索关键词</strong>
+            <div className="keyword-cloud purple">
+              {profile.searchKeywords.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          </div>
+        </article>
+
+        <article className="profile-card risk-card">
+          <div className="card-heading"><i>05</i><span><strong>风险信号</strong><small>看到这些情况，需要继续追问证据</small></span></div>
+          <ul>
+            {profile.redFlags.map((item) => <li key={item}><i>!</i><span>{item}</span></li>)}
+          </ul>
+        </article>
+
+        <article className="profile-card open-question-card">
+          <div className="card-heading"><i>06</i><span><strong>待业务确认</strong><small>JD 没有说清楚的关键招聘条件</small></span></div>
+          {profile.openQuestions.length ? (
+            <ol>
+              {profile.openQuestions.map((item) => <li key={item}>{item}</li>)}
+            </ol>
+          ) : (
+            <p className="all-clear">✓ 当前 JD 信息较完整，暂无关键待确认项</p>
+          )}
+          <button onClick={onReanalyze}>补充信息并重新分析</button>
         </article>
       </div>
 
       <details className="jd-source">
-        <summary>查看原始 JD <span>展开</span></summary>
-        <p>{job.jdText}</p>
+        <summary>查看分析依据（原始 JD 与补充要求）<span>展开</span></summary>
+        <p>{job.jdText}{job.supplementalRequirements ? `\n\n补充要求：\n${job.supplementalRequirements}` : ""}</p>
       </details>
+      <div className="profile-next">
+        <div><span>画像已准备好</span><strong>下一步可按这些条件筛选简历</strong></div>
+        <button className="primary-action" onClick={onContinue}>去筛选简历 <b>→</b></button>
+      </div>
+    </div>
+  );
+}
+
+function ProfileEditorModal({
+  job,
+  saving,
+  onClose,
+  onSave,
+}: {
+  job: Job;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (formData: FormData) => void;
+}) {
+  const profile = job.candidateProfile;
+  const joined = (items: string[]) => items.join("\n");
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="job-modal profile-editor" role="dialog" aria-modal="true" aria-label="编辑岗位画像">
+        <div className="modal-heading">
+          <div><span>CALIBRATE PERSONA</span><h2>人工校准岗位画像</h2><p>保存后生成新版本，不会修改原始 JD。</p></div>
+          <button aria-label="关闭" onClick={onClose}>×</button>
+        </div>
+        <form action={(formData) => void onSave(formData)}>
+          <label>一句话画像<textarea name="summary" required rows={2} defaultValue={profile.summary} /></label>
+          <label>岗位使命<textarea name="mission" required rows={3} defaultValue={profile.mission} /></label>
+          <div className="field-row">
+            <label>经验要求<input name="experience" required defaultValue={profile.experience} /></label>
+            <label>学历偏好<input name="education" required defaultValue={profile.education} /></label>
+          </div>
+          <label>职级定位<textarea name="seniority" required rows={2} defaultValue={profile.seniority} /></label>
+          <div className="editor-grid">
+            <label>必须满足 <span>每行一项</span><textarea name="mustHaves" rows={5} defaultValue={joined(profile.mustHaves)} /></label>
+            <label>核心能力 <span>每行一项</span><textarea name="capabilities" rows={5} defaultValue={joined(profile.capabilities)} /></label>
+            <label>典型背景 <span>每行一项</span><textarea name="backgrounds" rows={5} defaultValue={joined(profile.backgrounds)} /></label>
+            <label>加分信号 <span>每行一项</span><textarea name="bonusSignals" rows={5} defaultValue={joined(profile.bonusSignals)} /></label>
+            <label>目标职位名称 <span>每行一项</span><textarea name="targetTitles" rows={5} defaultValue={joined(profile.targetTitles)} /></label>
+            <label>搜索关键词 <span>每行一项</span><textarea name="searchKeywords" rows={5} defaultValue={joined(profile.searchKeywords)} /></label>
+            <label>风险信号 <span>每行一项</span><textarea name="redFlags" rows={5} defaultValue={joined(profile.redFlags)} /></label>
+            <label>待确认问题 <span>每行一项</span><textarea name="openQuestions" rows={5} defaultValue={joined(profile.openQuestions)} /></label>
+          </div>
+          <div className="modal-actions">
+            <button type="button" onClick={onClose}>取消</button>
+            <button className="primary" disabled={saving} type="submit">{saving ? "正在保存…" : "保存为新版本"}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function ReanalyzeModal({
+  job,
+  saving,
+  onClose,
+  onSave,
+}: {
+  job: Job;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (formData: FormData) => void;
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="job-modal" role="dialog" aria-modal="true" aria-label="重新分析岗位">
+        <div className="modal-heading">
+          <div><span>REANALYZE ROLE</span><h2>修改 JD 并重新分析</h2><p>系统会重新生成岗位画像、硬条件与能力维度。</p></div>
+          <button aria-label="关闭" onClick={onClose}>×</button>
+        </div>
+        <form action={(formData) => void onSave(formData)}>
+          <div className="field-row">
+            <label>岗位名称<input name="role" required defaultValue={job.role} /></label>
+            <label>所属部门<input name="department" required defaultValue={job.department} /></label>
+          </div>
+          <label>岗位 JD<textarea name="jdText" required rows={12} defaultValue={job.jdText} /></label>
+          <label>补充要求 <span>建议补充目标、团队、汇报线、职级与地点</span><textarea name="supplementalRequirements" rows={5} defaultValue={job.supplementalRequirements} /></label>
+          <div className="modal-note"><i>↻</i><span><strong>会生成新的画像版本</strong><small>人工编辑过的画像会被新分析结果替换，请先导出需要保留的内容。</small></span></div>
+          <div className="modal-actions">
+            <button type="button" onClick={onClose}>取消</button>
+            <button className="primary" disabled={saving} type="submit">{saving ? "正在重新分析…" : "保存并重新分析"}</button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }

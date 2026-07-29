@@ -37,6 +37,8 @@ export function ensureDatabaseSchema() {
         role text NOT NULL,
         department text NOT NULL,
         jd_text text NOT NULL DEFAULT '',
+        supplemental_requirements text NOT NULL DEFAULT '',
+        candidate_profile text,
         version integer NOT NULL,
         owner text NOT NULL,
         headcount integer NOT NULL,
@@ -95,6 +97,16 @@ export function ensureDatabaseSchema() {
           "ALTER TABLE jobs ADD COLUMN interview_dimensions text NOT NULL DEFAULT '[]'",
         )
         .run();
+    }
+    if (!columnNames.has("supplemental_requirements")) {
+      await d1
+        .prepare(
+          "ALTER TABLE jobs ADD COLUMN supplemental_requirements text NOT NULL DEFAULT ''",
+        )
+        .run();
+    }
+    if (!columnNames.has("candidate_profile")) {
+      await d1.prepare("ALTER TABLE jobs ADD COLUMN candidate_profile text").run();
     }
 
     const candidateColumns = await d1.prepare("PRAGMA table_info(candidates)").all<{
@@ -457,6 +469,8 @@ export async function updateJobStandard(
       | "role"
       | "department"
       | "jdText"
+      | "supplementalRequirements"
+      | "candidateProfile"
       | "owner"
       | "headcount"
       | "gates"

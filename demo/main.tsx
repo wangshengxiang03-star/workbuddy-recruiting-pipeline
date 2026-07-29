@@ -1,6 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import Home from "../app/page";
+import { deriveCandidateProfile } from "../app/lib/job-analysis";
+import type { CandidateProfile } from "../app/lib/job-analysis";
 import "../app/globals.css";
 import "./demo.css";
 
@@ -104,12 +106,32 @@ const demoCandidates: DemoCandidate[] = [
   },
 ];
 
-const demoJobs = [
+type DemoJob = {
+  id: string;
+  role: string;
+  department: string;
+  jdText: string;
+  supplementalRequirements: string;
+  version: string;
+  versionNumber: number;
+  updatedAt: string;
+  owner: string;
+  headcount: number;
+  filledHeadcount: number;
+  gates: string[];
+  weights: Array<[string, number]>;
+  interviewDimensions: string[];
+  status: string;
+  candidateProfile?: CandidateProfile;
+};
+
+const demoJobs: DemoJob[] = [
   {
     id: "job-senior-pm",
     role: "高级产品经理",
     department: "产品与增长部",
     jdText: "负责 B 端产品规划、需求分析和跨团队项目推进，要求 5 年以上产品经验。",
+    supplementalRequirements: "希望有 0→1 项目经验，入职后负责企业服务产品核心模块。",
     version: "v3",
     versionNumber: 3,
     updatedAt: "今天 10:24",
@@ -126,6 +148,7 @@ const demoJobs = [
     role: "用户增长专家",
     department: "市场增长部",
     jdText: "负责增长策略、实验设计与数据分析。",
+    supplementalRequirements: "需要有成熟互联网平台经验。",
     version: "v2",
     versionNumber: 2,
     updatedAt: "昨天",
@@ -139,19 +162,21 @@ const demoJobs = [
   },
 ];
 
-function enrichDemoJob(job: (typeof demoJobs)[number]) {
+function enrichDemoJob(job: DemoJob) {
   const capabilities = job.interviewDimensions.filter((item) => item !== "求职动机");
+  const candidateProfile =
+    job.candidateProfile ??
+    deriveCandidateProfile({
+      role: job.role,
+      department: job.department,
+      jdText: job.jdText,
+      supplementalRequirements: job.supplementalRequirements,
+      gates: job.gates,
+      interviewDimensions: job.interviewDimensions,
+    });
   return {
     ...job,
-    candidateProfile: {
-      summary: `寻找一位具备相关业务经验、能够在${job.department}独立承担核心工作的${job.role}。`,
-      experience: job.gates.find((item) => item.includes("年")) ?? "以项目深度和岗位胜任力为主",
-      education: job.gates.find((item) => /本科|硕士/.test(item)) ?? "学历不限，以实际能力为主",
-      backgrounds: ["互联网平台经验", "与岗位场景相近的项目经历"],
-      capabilities,
-      bonusSignals: ["有可量化的业务成果", "能够清晰复盘关键项目"],
-      verificationPoints: job.gates,
-    },
+    candidateProfile,
     interviewQuestions: [
       {
         category: "经历验证",
@@ -267,6 +292,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         role: body.role,
         department: body.department,
         jdText: body.jdText,
+        supplementalRequirements: body.supplementalRequirements || "",
         version: "v1",
         versionNumber: 1,
         updatedAt: "刚刚",
@@ -274,7 +300,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         headcount: body.headcount || 1,
         filledHeadcount: 0,
         gates: ["本科及以上", "相关岗位经验符合要求"],
-        weights: [["专业能力", 35], ["项目经验", 30], ["数据分析", 20], ["协作影响力", 15]],
+        weights: [["专业能力", 35], ["项目经验", 30], ["数据分析", 20], ["协作影响力", 15]] as Array<[string, number]>,
         interviewDimensions: ["专业能力", "项目深挖", "数据决策", "协作影响力", "求职动机"],
         status: "active",
       };
@@ -283,14 +309,30 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     if (method === "PATCH") {
       const body = JSON.parse(String(init?.body ?? "{}"));
-      const current = demoJobs.find((job) => job.id === body.id) ?? demoJobs[0];
+      const index = demoJobs.findIndex((job) => job.id === body.id);
+      const current = demoJobs[index] ?? demoJobs[0];
+      const nextCandidateProfile = body.candidateProfile
+        ? body.candidateProfile
+        : body.regenerateProfile
+          ? deriveCandidateProfile({
+              role: body.role || current.role,
+              department: body.department || current.department,
+              jdText: body.jdText || current.jdText,
+              supplementalRequirements:
+                body.supplementalRequirements ?? current.supplementalRequirements,
+              gates: current.gates,
+              interviewDimensions: current.interviewDimensions,
+            })
+          : current.candidateProfile;
       const updated = {
         ...current,
         ...body,
+        candidateProfile: nextCandidateProfile,
         versionNumber: current.versionNumber + 1,
         version: `v${current.versionNumber + 1}`,
         updatedAt: "刚刚",
       };
+      if (index >= 0) demoJobs[index] = updated;
       return json({ job: enrichDemoJob(updated) });
     }
     return json({ jobs: demoJobs.map(enrichDemoJob) });
