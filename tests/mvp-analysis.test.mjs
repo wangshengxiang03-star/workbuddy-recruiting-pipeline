@@ -190,6 +190,7 @@ test("uses Volcengine Ark when it is selected", async () => {
     assert.equal(requestBody.store, false);
     assert.equal(requestBody.text.format.type, "json_schema");
     assert.equal(requestBody.reasoning, undefined);
+    assert.equal(requestBody.thinking.type, "disabled");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.ARK_API_KEY;

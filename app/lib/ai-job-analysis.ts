@@ -284,7 +284,7 @@ export async function analyzeCandidateProfile(
 
   const fallback = deriveCandidateProfile(job);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 55_000);
+  const timeout = setTimeout(() => controller.abort(), 110_000);
   try {
     const response = await fetch(provider.endpoint, {
       method: "POST",
@@ -298,7 +298,7 @@ export async function analyzeCandidateProfile(
         store: false,
         ...(provider.id === "openai"
           ? { reasoning: { effort: "medium" } }
-          : {}),
+          : { thinking: { type: "disabled" } }),
         text: {
           ...(provider.id === "openai" ? { verbosity: "high" } : {}),
           format: {
