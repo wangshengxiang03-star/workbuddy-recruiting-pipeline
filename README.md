@@ -4,9 +4,11 @@
 
 ## 在线体验
 
-[打开 WorkBuddy 在线体验站](https://workbuddy-hiring-pipeline.wangshengxiang7.chatgpt.site)
+[打开 GitHub Pages 公开演示版](https://wangshengxiang03-star.github.io/workbuddy-recruiting-pipeline/)
 
-> 在线体验站运行完整的服务端接口、数据库和文件存储。GitHub Pages 仅适合静态网站，无法承载本项目的简历上传与数据处理能力。
+> GitHub Pages 版本使用虚构数据和浏览器内模拟接口，适合外部 HR 体验界面与流程。完整版本包含服务端接口、数据库和文件存储，不会在 GitHub Pages 上处理真实简历。
+
+完整版本（部分网络环境可能限制访问）：[ChatGPT Sites 体验站](https://workbuddy-hiring-pipeline.wangshengxiang7.chatgpt.site)
 
 ## 当前能力
 
@@ -46,6 +48,12 @@ npm run dev
 
 ```bash
 npm run build
+```
+
+构建 GitHub Pages 公开演示版：
+
+```bash
+npm run build:demo
 ```
 
 数据库结构调整后生成迁移：
