@@ -46,7 +46,10 @@ npm install
 npm run dev
 ```
 
-复制 `.env.example` 为 `.env.local`，配置 `OPENAI_API_KEY` 后可在本地启用模型分析。默认模型为 `gpt-5.6-sol`，可通过 `OPENAI_MODEL` 调整。
+复制 `.env.example` 为 `.env.local` 后可在本地启用模型分析。推荐配置
+`AI_PROVIDER=volcengine`、`ARK_API_KEY` 与 `ARK_MODEL` 使用火山方舟；
+也可配置 `AI_PROVIDER=openai`、`OPENAI_API_KEY` 与 `OPENAI_MODEL` 使用 OpenAI。
+未指定 `AI_PROVIDER` 时，系统优先使用已配置的火山方舟，其次使用 OpenAI。
 
 构建验证：
 

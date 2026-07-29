@@ -4,7 +4,64 @@ import {
   type JobAnalysisInput,
 } from "./job-analysis.ts";
 
-const MODEL = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-sol";
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-sol";
+const DEFAULT_ARK_MODEL = "doubao-seed-2-0-lite-260215";
+
+type ModelProvider = {
+  id: "openai" | "volcengine";
+  apiKey: string;
+  endpoint: string;
+  model: string;
+  displayName: string;
+};
+
+function configuredProvider(): ModelProvider | null {
+  const requested = process.env.AI_PROVIDER?.trim().toLowerCase();
+  const arkKey = process.env.ARK_API_KEY?.trim();
+  const openAIKey = process.env.OPENAI_API_KEY?.trim();
+
+  if (requested === "volcengine") {
+    return arkKey
+      ? {
+          id: "volcengine",
+          apiKey: arkKey,
+          endpoint: "https://ark.cn-beijing.volces.com/api/v3/responses",
+          model: process.env.ARK_MODEL?.trim() || DEFAULT_ARK_MODEL,
+          displayName: "火山方舟",
+        }
+      : null;
+  }
+  if (requested === "openai") {
+    return openAIKey
+      ? {
+          id: "openai",
+          apiKey: openAIKey,
+          endpoint: "https://api.openai.com/v1/responses",
+          model: process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+          displayName: "OpenAI",
+        }
+      : null;
+  }
+  if (arkKey) {
+    return {
+      id: "volcengine",
+      apiKey: arkKey,
+      endpoint: "https://ark.cn-beijing.volces.com/api/v3/responses",
+      model: process.env.ARK_MODEL?.trim() || DEFAULT_ARK_MODEL,
+      displayName: "火山方舟",
+    };
+  }
+  if (openAIKey) {
+    return {
+      id: "openai",
+      apiKey: openAIKey,
+      endpoint: "https://api.openai.com/v1/responses",
+      model: process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+      displayName: "OpenAI",
+    };
+  }
+  return null;
+}
 
 const stringArray = {
   type: "array",
@@ -115,7 +172,7 @@ function cleanArray(value: unknown, fallback: string[], limit = 12) {
 export function normalizeModelProfile(
   value: unknown,
   fallback: CandidateProfile,
-  model = MODEL,
+  model = DEFAULT_OPENAI_MODEL,
 ): CandidateProfile {
   const data = value && typeof value === "object" ? value as Partial<CandidateProfile> : {};
   const capabilityDetails = Array.isArray(data.capabilityDetails)
@@ -211,9 +268,12 @@ export async function analyzeCandidateProfile(
   job: JobAnalysisInput,
   options?: { modelAllowed?: boolean; limitWarning?: string },
 ): Promise<CandidateProfile> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) {
-    return fallbackWithWarning(job, "生产环境尚未配置模型密钥，本次使用规则降级。");
+  const provider = configuredProvider();
+  if (!provider) {
+    return fallbackWithWarning(
+      job,
+      "生产环境尚未配置所选模型服务的密钥，本次使用规则降级。",
+    );
   }
   if (options?.modelAllowed === false) {
     return fallbackWithWarning(
@@ -226,19 +286,21 @@ export async function analyzeCandidateProfile(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 55_000);
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(provider.endpoint, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${apiKey}`,
+        authorization: `Bearer ${provider.apiKey}`,
         "content-type": "application/json",
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: MODEL,
+        model: provider.model,
         store: false,
-        reasoning: { effort: "medium" },
+        ...(provider.id === "openai"
+          ? { reasoning: { effort: "medium" } }
+          : {}),
         text: {
-          verbosity: "high",
+          ...(provider.id === "openai" ? { verbosity: "high" } : {}),
           format: {
             type: "json_schema",
             name: "candidate_profile",
@@ -279,7 +341,11 @@ ${job.interviewDimensions.map((item) => `- ${item}`).join("\n")}`,
     }
     const text = outputText(payload);
     if (!text) throw new Error("模型没有返回结构化画像");
-    return normalizeModelProfile(JSON.parse(text), fallback, MODEL);
+    return normalizeModelProfile(
+      JSON.parse(text),
+      fallback,
+      `${provider.displayName} · ${provider.model}`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "未知模型错误";
     return fallbackWithWarning(job, `模型分析暂不可用，已自动降级：${message}`);
@@ -289,5 +355,5 @@ ${job.interviewDimensions.map((item) => `- ${item}`).join("\n")}`,
 }
 
 export function modelAnalysisConfigured() {
-  return Boolean(process.env.OPENAI_API_KEY?.trim());
+  return configuredProvider() !== null;
 }

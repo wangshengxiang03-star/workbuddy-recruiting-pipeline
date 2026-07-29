@@ -95,8 +95,10 @@ test("normalizes a structured model profile and records model provenance", () =>
 
 test("calls the Responses API with structured output when a key is configured", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
   const previousFetch = globalThis.fetch;
   let requestBody;
+  process.env.AI_PROVIDER = "openai";
   process.env.OPENAI_API_KEY = "test-key";
   globalThis.fetch = async (url, init) => {
     assert.equal(url, "https://api.openai.com/v1/responses");
@@ -127,6 +129,7 @@ test("calls the Responses API with structured output when a key is configured", 
     const profile = await analyzeCandidateProfile(job);
     assert.equal(profile.analysisMeta.source, "model");
     assert.equal(profile.summary, "模型生成的高级产品经理画像");
+    assert.equal(profile.analysisMeta.model, "OpenAI · gpt-5.6-sol");
     assert.equal(requestBody.model, "gpt-5.6-sol");
     assert.equal(requestBody.store, false);
     assert.equal(requestBody.text.format.type, "json_schema");
@@ -135,6 +138,66 @@ test("calls the Responses API with structured output when a key is configured", 
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("uses Volcengine Ark when it is selected", async () => {
+  const previousKey = process.env.ARK_API_KEY;
+  const previousModel = process.env.ARK_MODEL;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  let requestBody;
+  process.env.AI_PROVIDER = "volcengine";
+  process.env.ARK_API_KEY = "ark-test-key";
+  process.env.ARK_MODEL = "doubao-seed-2-0-lite-260215";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://ark.cn-beijing.volces.com/api/v3/responses");
+    assert.equal(init?.headers.authorization, "Bearer ark-test-key");
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  ...deriveCandidateProfile(job),
+                  analysisMeta: undefined,
+                  summary: "豆包生成的高级产品经理画像",
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const profile = await analyzeCandidateProfile(job);
+    assert.equal(profile.analysisMeta.source, "model");
+    assert.equal(profile.summary, "豆包生成的高级产品经理画像");
+    assert.equal(
+      profile.analysisMeta.model,
+      "火山方舟 · doubao-seed-2-0-lite-260215",
+    );
+    assert.equal(requestBody.model, "doubao-seed-2-0-lite-260215");
+    assert.equal(requestBody.store, false);
+    assert.equal(requestBody.text.format.type, "json_schema");
+    assert.equal(requestBody.reasoning, undefined);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.ARK_MODEL;
+    else process.env.ARK_MODEL = previousModel;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
   }
 });
 
