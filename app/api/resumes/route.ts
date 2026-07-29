@@ -11,6 +11,7 @@ import {
 } from "../../../db/repository";
 import { getResumeBucket } from "../../../db/storage";
 import {
+  buildResumeTags,
   type ParsedResume,
   scoreResume,
 } from "../../lib/resume-processing";
@@ -24,6 +25,10 @@ const allowedExtensions = new Set(["pdf", "doc", "docx", "png", "jpg", "jpeg", "
 function serializeResume(
   record: Awaited<ReturnType<typeof listResumeRecords>>[number],
 ) {
+  const parsed = (record.parsedData ?? {}) as Partial<ParsedResume> & {
+    tags?: string[];
+    matchedDimensions?: string[];
+  };
   return {
     id: record.id,
     batchId: record.batchId,
@@ -36,6 +41,9 @@ function serializeResume(
     result: record.result ?? "等待解析",
     errorMessage: record.errorMessage,
     createdAt: record.createdAt.toISOString(),
+    tags:
+      parsed.tags ??
+      buildResumeTags(parsed, parsed.matchedDimensions ?? []),
   };
 }
 
@@ -198,6 +206,7 @@ export async function PATCH(request: Request) {
       ...parsed,
       failedGates: scored.failedGates,
       matchedDimensions: scored.matchedDimensions,
+      tags: buildResumeTags(parsed, scored.matchedDimensions),
     },
     candidateId: candidate.id,
     duplicateOf: null,

@@ -24,6 +24,24 @@ export type ScoredResume = {
   matchedDimensions: string[];
 };
 
+export function buildResumeTags(
+  parsed: Partial<ParsedResume>,
+  matchedDimensions: string[] = [],
+) {
+  const tags = [
+    parsed.school && !parsed.school.includes("待确认") ? parsed.school : "",
+    parsed.education && !parsed.education.includes("待确认") ? parsed.education : "",
+    parsed.years ? `${parsed.years} 年经验` : "",
+    parsed.city ? `现居 ${parsed.city}` : "",
+    parsed.currentTitle && !parsed.currentTitle.includes("待确认")
+      ? parsed.currentTitle
+      : "",
+    ...(parsed.skills ?? []).slice(0, 5),
+    ...matchedDimensions.slice(0, 3),
+  ];
+  return [...new Set(tags.filter(Boolean))].slice(0, 10);
+}
+
 type JobForScoring = {
   role: string;
   gates: string[];

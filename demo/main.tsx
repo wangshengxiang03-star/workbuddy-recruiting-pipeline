@@ -139,6 +139,60 @@ const demoJobs = [
   },
 ];
 
+function enrichDemoJob(job: (typeof demoJobs)[number]) {
+  const capabilities = job.interviewDimensions.filter((item) => item !== "求职动机");
+  return {
+    ...job,
+    candidateProfile: {
+      summary: `寻找一位具备相关业务经验、能够在${job.department}独立承担核心工作的${job.role}。`,
+      experience: job.gates.find((item) => item.includes("年")) ?? "以项目深度和岗位胜任力为主",
+      education: job.gates.find((item) => /本科|硕士/.test(item)) ?? "学历不限，以实际能力为主",
+      backgrounds: ["互联网平台经验", "与岗位场景相近的项目经历"],
+      capabilities,
+      bonusSignals: ["有可量化的业务成果", "能够清晰复盘关键项目"],
+      verificationPoints: job.gates,
+    },
+    interviewQuestions: [
+      {
+        category: "经历验证",
+        question: `请挑选一段最能证明你胜任「${job.role}」的经历，说明目标、职责和结果。`,
+        focus: "经历真实性、职责边界、结果量化",
+        followUp: "如果重新做一次，你会改变哪个关键决策？",
+      },
+      {
+        category: capabilities[0] ?? "专业能力",
+        question: `讲一个最能体现你「${capabilities[0] ?? "专业能力"}」的项目案例。`,
+        focus: "方法、深度和经验可迁移性",
+        followUp: "当时有哪些备选方案？为什么这样选择？",
+      },
+      {
+        category: "项目推进",
+        question: "讲一次目标不清晰或资源不足的项目。你如何拆解并推动结果？",
+        focus: "优先级判断、资源协调、推进韧性",
+        followUp: "阻力最大的节点是什么？你具体做了什么？",
+      },
+      {
+        category: "业务场景",
+        question: `如果入职后负责${job.department}的一项新任务，你会如何规划前 30 天？`,
+        focus: "业务理解、信息收集、结构化思考",
+        followUp: "你会优先看哪三个指标或信息源？",
+      },
+      {
+        category: "硬门槛核验",
+        question: `岗位要求「${job.gates[0]}」。请用一个具体案例证明你的实际经验。`,
+        focus: "硬门槛证据、个人贡献、经验相关性",
+        followUp: "这段经验中最复杂的判断是什么？",
+      },
+      {
+        category: "求职动机",
+        question: `你为什么考虑这个「${job.role}」岗位？下一份工作最希望获得什么？`,
+        focus: "动机真实性、岗位预期、稳定性",
+        followUp: "什么情况下你会认为这次选择不合适？",
+      },
+    ],
+  };
+}
+
 let uploadedFiles: Array<{
   id: string;
   name: string;
@@ -146,7 +200,33 @@ let uploadedFiles: Array<{
   status: string;
   score: number | null;
   result: string;
-}> = [];
+  tags: string[];
+  errorMessage: string | null;
+  createdAt: string;
+}> = [
+  {
+    id: "demo-resume-linxu",
+    name: "林栩-高级产品经理.pdf",
+    role: "高级产品经理",
+    status: "已完成",
+    score: 92,
+    result: "强推荐",
+    tags: ["浙江大学", "本科", "7 年经验", "B 端", "产品规划", "数据分析"],
+    errorMessage: null,
+    createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+  },
+  {
+    id: "demo-resume-chenmo",
+    name: "陈默-产品经理.pdf",
+    role: "高级产品经理",
+    status: "已完成",
+    score: 78,
+    result: "可面试",
+    tags: ["同济大学", "本科", "5 年经验", "需求分析", "项目管理"],
+    errorMessage: null,
+    createdAt: new Date(Date.now() - 48 * 60_000).toISOString(),
+  },
+];
 
 const originalFetch = window.fetch.bind(window);
 
@@ -199,7 +279,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         status: "active",
       };
       demoJobs.unshift(created);
-      return json({ job: created }, 201);
+      return json({ job: enrichDemoJob(created) }, 201);
     }
     if (method === "PATCH") {
       const body = JSON.parse(String(init?.body ?? "{}"));
@@ -211,9 +291,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         version: `v${current.versionNumber + 1}`,
         updatedAt: "刚刚",
       };
-      return json({ job: updated });
+      return json({ job: enrichDemoJob(updated) });
     }
-    return json({ jobs: demoJobs });
+    return json({ jobs: demoJobs.map(enrichDemoJob) });
   }
 
   if (url.pathname === "/api/resumes/process") {
@@ -232,6 +312,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         status: "已完成",
         score: 82 - index,
         result: "可面试",
+        tags: ["本科", "5 年经验", "产品规划", "数据分析"],
+        errorMessage: null,
+        createdAt: new Date().toISOString(),
       }));
       uploadedFiles = [...created, ...uploadedFiles];
       return json({ files: created }, 201);

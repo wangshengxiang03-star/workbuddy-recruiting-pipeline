@@ -8,6 +8,7 @@ import {
 } from "../../../../db/repository";
 import { getResumeBucket } from "../../../../db/storage";
 import {
+  buildResumeTags,
   extractResumeText,
   parseResumeText,
   scoreResume,
@@ -142,6 +143,7 @@ export async function POST(request: Request) {
           ...parsed,
           failedGates: scored.failedGates,
           matchedDimensions: scored.matchedDimensions,
+          tags: buildResumeTags(parsed, scored.matchedDimensions),
         },
         candidateId: candidate.id,
         targetRole: job.role,
