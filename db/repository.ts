@@ -2,6 +2,98 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "./index";
 import { activityLogs, candidates, jobs, resumeFiles } from "./schema";
 
+let schemaReady: Promise<void> | null = null;
+
+export function ensureDatabaseSchema() {
+  if (schemaReady) return schemaReady;
+  schemaReady = (async () => {
+    const db = getDb();
+    const d1 = db.$client;
+    await d1.batch([
+      d1.prepare(`CREATE TABLE IF NOT EXISTS candidates (
+        id text PRIMARY KEY NOT NULL,
+        name text NOT NULL,
+        initials text NOT NULL,
+        role text NOT NULL,
+        score integer NOT NULL,
+        status text NOT NULL,
+        tone text NOT NULL,
+        school text NOT NULL,
+        company text NOT NULL,
+        experience text NOT NULL,
+        channel text NOT NULL,
+        highlights text NOT NULL,
+        risk text NOT NULL,
+        owner_email text,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      )`),
+      d1.prepare(`CREATE TABLE IF NOT EXISTS jobs (
+        id text PRIMARY KEY NOT NULL,
+        role text NOT NULL,
+        department text NOT NULL,
+        jd_text text NOT NULL DEFAULT '',
+        version integer NOT NULL,
+        owner text NOT NULL,
+        headcount integer NOT NULL,
+        filled_headcount integer NOT NULL DEFAULT 0,
+        gates text NOT NULL,
+        weights text NOT NULL,
+        interview_dimensions text NOT NULL DEFAULT '[]',
+        status text NOT NULL DEFAULT 'active',
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      )`),
+      d1.prepare(`CREATE TABLE IF NOT EXISTS activity_logs (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        candidate_id text,
+        action text NOT NULL,
+        actor_email text,
+        created_at integer NOT NULL
+      )`),
+      d1.prepare(`CREATE TABLE IF NOT EXISTS resume_files (
+        id text PRIMARY KEY NOT NULL,
+        batch_id text NOT NULL,
+        original_name text NOT NULL,
+        storage_key text NOT NULL,
+        content_type text NOT NULL,
+        size_bytes integer NOT NULL,
+        target_role text,
+        status text NOT NULL DEFAULT '已入库',
+        score integer,
+        result text,
+        uploaded_by text,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      )`),
+      d1.prepare(
+        "CREATE UNIQUE INDEX IF NOT EXISTS resume_files_storage_key_unique ON resume_files (storage_key)",
+      ),
+    ]);
+
+    const jobColumns = await d1.prepare("PRAGMA table_info(jobs)").all<{
+      name: string;
+    }>();
+    const columnNames = new Set(
+      (jobColumns.results as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!columnNames.has("jd_text")) {
+      await d1.prepare("ALTER TABLE jobs ADD COLUMN jd_text text NOT NULL DEFAULT ''").run();
+    }
+    if (!columnNames.has("interview_dimensions")) {
+      await d1
+        .prepare(
+          "ALTER TABLE jobs ADD COLUMN interview_dimensions text NOT NULL DEFAULT '[]'",
+        )
+        .run();
+    }
+  })().catch((error) => {
+    schemaReady = null;
+    throw error;
+  });
+  return schemaReady;
+}
+
 const seedCandidates: Array<typeof candidates.$inferInsert> = [
   {
     id: "candidate-linxu",
@@ -133,6 +225,7 @@ const seedJobs: Array<typeof jobs.$inferInsert> = [
 ];
 
 export async function ensureSeedData() {
+  await ensureDatabaseSchema();
   const db = getDb();
   await db.insert(candidates).values(seedCandidates).onConflictDoNothing();
   await db.insert(jobs).values(seedJobs).onConflictDoNothing();
@@ -173,6 +266,7 @@ export async function listJobs() {
 }
 
 export async function listRecentActivity() {
+  await ensureDatabaseSchema();
   return getDb()
     .select()
     .from(activityLogs)
@@ -183,14 +277,72 @@ export async function listRecentActivity() {
 export async function createResumeRecords(
   records: Array<typeof resumeFiles.$inferInsert>,
 ) {
+  await ensureDatabaseSchema();
   if (!records.length) return [];
   return getDb().insert(resumeFiles).values(records).returning();
 }
 
 export async function listResumeRecords(limit = 50) {
+  await ensureDatabaseSchema();
   return getDb()
     .select()
     .from(resumeFiles)
     .orderBy(desc(resumeFiles.createdAt))
     .limit(limit);
+}
+
+export async function createJobStandard(
+  input: Omit<
+    typeof jobs.$inferInsert,
+    "id" | "version" | "filledHeadcount" | "status" | "createdAt" | "updatedAt"
+  >,
+) {
+  await ensureDatabaseSchema();
+  const now = new Date();
+  const created = await getDb()
+    .insert(jobs)
+    .values({
+      ...input,
+      id: crypto.randomUUID(),
+      version: 1,
+      filledHeadcount: 0,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  return created[0];
+}
+
+export async function updateJobStandard(
+  id: string,
+  input: Partial<
+    Pick<
+      typeof jobs.$inferInsert,
+      | "role"
+      | "department"
+      | "jdText"
+      | "owner"
+      | "headcount"
+      | "gates"
+      | "weights"
+      | "interviewDimensions"
+      | "status"
+    >
+  >,
+) {
+  await ensureDatabaseSchema();
+  const db = getDb();
+  const existing = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
+  if (!existing[0]) return null;
+  const updated = await db
+    .update(jobs)
+    .set({
+      ...input,
+      version: existing[0].version + 1,
+      updatedAt: new Date(),
+    })
+    .where(eq(jobs.id, id))
+    .returning();
+  return updated[0] ?? null;
 }

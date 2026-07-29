@@ -23,6 +23,7 @@ export const jobs = sqliteTable("jobs", {
   id: text("id").primaryKey(),
   role: text("role").notNull(),
   department: text("department").notNull(),
+  jdText: text("jd_text").notNull().default(""),
   version: integer("version").notNull(),
   owner: text("owner").notNull(),
   headcount: integer("headcount").notNull(),
@@ -31,6 +32,10 @@ export const jobs = sqliteTable("jobs", {
   weights: text("weights", { mode: "json" })
     .$type<Array<[string, number]>>()
     .notNull(),
+  interviewDimensions: text("interview_dimensions", { mode: "json" })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   status: text("status").notNull().default("active"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),

@@ -24,6 +24,23 @@ type WorkflowModal = {
   candidate: Candidate;
 } | null;
 
+type JobStandard = {
+  id: string;
+  role: string;
+  department: string;
+  jdText: string;
+  version: string;
+  versionNumber: number;
+  updatedAt: string;
+  owner: string;
+  headcount: number;
+  filledHeadcount: number;
+  gates: string[];
+  weights: Array<[string, number]>;
+  interviewDimensions: string[];
+  status: string;
+};
+
 const candidates: Candidate[] = [
   {
     id: "candidate-linxu",
@@ -151,33 +168,54 @@ type ModuleProps = {
   candidateData: Candidate[];
 };
 
-const standards = [
+const standards: JobStandard[] = [
   {
+    id: "job-senior-pm",
     role: "高级产品经理",
-    dept: "产品与增长部",
+    department: "产品与增长部",
+    jdText: "负责 B 端产品规划、需求分析和跨团队项目推进，要求 5 年以上产品经验。",
     version: "v3",
-    updated: "今天 10:24",
+    versionNumber: 3,
+    updatedAt: "今天 10:24",
     owner: "王嘉琪",
+    headcount: 3,
+    filledHeadcount: 2,
     gates: ["本科及以上", "5 年以上产品经验", "B 端产品经验"],
     weights: [["业务洞察", 30], ["产品能力", 30], ["数据分析", 20], ["协作影响力", 20]],
+    interviewDimensions: ["业务拆解", "复杂项目推进", "数据决策", "领导力", "求职动机"],
+    status: "active",
   },
   {
+    id: "job-growth",
     role: "用户增长专家",
-    dept: "市场增长部",
+    department: "市场增长部",
+    jdText: "负责增长策略、实验设计与转化分析，要求 4 年以上增长经验。",
     version: "v2",
-    updated: "昨天 16:40",
+    versionNumber: 2,
+    updatedAt: "昨天 16:40",
     owner: "孟玮",
+    headcount: 2,
+    filledHeadcount: 1,
     gates: ["本科及以上", "4 年以上增长经验", "有实验平台经验"],
     weights: [["增长策略", 35], ["实验设计", 25], ["数据能力", 25], ["项目推进", 15]],
+    interviewDimensions: ["增长策略", "实验设计", "数据分析", "项目推进", "求职动机"],
+    status: "active",
   },
   {
+    id: "job-recruiting-ops",
     role: "招聘运营经理",
-    dept: "人力资源部",
+    department: "人力资源部",
+    jdText: "负责招聘流程设计、人才库运营和招聘数据分析。",
     version: "v1",
-    updated: "7 月 25 日",
+    versionNumber: 1,
+    updatedAt: "7 月 25 日",
     owner: "王嘉琪",
+    headcount: 1,
+    filledHeadcount: 0,
     gates: ["本科及以上", "3 年招聘运营经验"],
     weights: [["流程设计", 35], ["项目管理", 25], ["数据分析", 20], ["业务理解", 20]],
+    interviewDimensions: ["流程设计", "项目管理", "数据分析", "业务理解", "求职动机"],
+    status: "active",
   },
 ];
 
@@ -203,61 +241,179 @@ function ModuleHeader({
 }
 
 function JobsPanel({ notify }: Pick<ModuleProps, "notify">) {
+  const [jobStandards, setJobStandards] = useState<JobStandard[]>(standards);
   const [selectedStandard, setSelectedStandard] = useState(0);
-  const standard = standards[selectedStandard];
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [draftGates, setDraftGates] = useState<string[]>(standards[0].gates);
+  const [draftWeights, setDraftWeights] = useState<Array<[string, number]>>(standards[0].weights);
+  const standard = jobStandards[selectedStandard] ?? jobStandards[0];
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/jobs", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload: { jobs: JobStandard[] }) => {
+        if (payload.jobs.length) {
+          setJobStandards(payload.jobs);
+          setDraftGates(payload.jobs[0].gates);
+          setDraftWeights(payload.jobs[0].weights);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!standard) return;
+    setDraftGates(standard.gates);
+    setDraftWeights(standard.weights);
+  }, [standard?.id, standard?.version]);
+
+  const createStandard = async (formData: FormData) => {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: formData.get("role"),
+          department: formData.get("department"),
+          owner: formData.get("owner"),
+          headcount: Number(formData.get("headcount")),
+          jdText: formData.get("jdText"),
+          supplementalRequirements: formData.get("supplementalRequirements"),
+        }),
+      });
+      const payload = (await response.json()) as { job?: JobStandard; error?: string };
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "岗位标准创建失败");
+      setJobStandards((current) => [payload.job!, ...current]);
+      setSelectedStandard(0);
+      setShowCreate(false);
+      notify(`${payload.job.role}标准已生成并保存为 v1`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "岗位标准创建失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveStandard = async () => {
+    const total = draftWeights.reduce((sum, [, value]) => sum + Number(value), 0);
+    if (total !== 100) {
+      notify("评分权重合计必须为 100%");
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await fetch("/api/jobs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: standard.id,
+          gates: draftGates,
+          weights: draftWeights,
+          interviewDimensions: standard.interviewDimensions,
+        }),
+      });
+      const payload = (await response.json()) as { job?: JobStandard; error?: string };
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "保存失败");
+      setJobStandards((current) => current.map((item) => item.id === payload.job!.id ? payload.job! : item));
+      notify(`${payload.job.role}已保存为 ${payload.job.version}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "岗位标准保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addGate = () => {
+    const value = window.prompt("请输入新的硬性筛选门槛");
+    if (value?.trim()) setDraftGates((current) => [...current, value.trim()]);
+  };
+
+  const exportStandard = () => {
+    const content = `# ${standard.role} - 招聘标准\n\n## 硬性门槛\n${draftGates.map((item) => `- ${item}`).join("\n")}\n\n## 评分权重\n${draftWeights.map(([label, value]) => `- ${label}: ${value}%`).join("\n")}\n\n## 面试考察维度\n${standard.interviewDimensions.map((item) => `- ${item}`).join("\n")}`;
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+    link.download = `${standard.role}-招聘标准.md`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    notify("岗位标准 Markdown 已导出");
+  };
+
   return (
     <div className="module-page">
-      <ModuleHeader
-        eyebrow="JOB STANDARD"
-        title="岗位标准管理"
-        description="统一硬门槛、评分权重与面试考察维度，为 AI 筛选提供唯一判断基准。"
-        action="从 JD 生成标准"
-        onAction={() => notify("已创建岗位标准草稿，可继续补充招聘要求")}
-      />
+      <ModuleHeader eyebrow="JOB STANDARD" title="岗位标准管理" description="统一硬门槛、评分权重与面试考察维度，为智能筛选提供唯一判断基准。" action="从 JD 生成标准" onAction={() => setShowCreate(true)} />
       <div className="standard-layout">
         <div className="standard-list">
-          <div className="panel-title"><div><span>岗位库</span><strong>7 个在招岗位</strong></div><button onClick={() => notify("岗位列表已刷新")}>↻</button></div>
-          {standards.map((item, index) => (
-            <button
-              className={`standard-item ${selectedStandard === index ? "active" : ""}`}
-              key={item.role}
-              onClick={() => setSelectedStandard(index)}
-            >
+          <div className="panel-title"><div><span>岗位库</span><strong>{jobStandards.length} 个在招岗位</strong></div><button onClick={() => window.location.reload()}>↻</button></div>
+          {jobStandards.map((item, index) => (
+            <button className={`standard-item ${selectedStandard === index ? "active" : ""}`} key={item.id} onClick={() => setSelectedStandard(index)}>
               <i>{item.role.slice(0, 1)}</i>
-              <span><strong>{item.role}</strong><small>{item.dept} · {item.owner}</small></span>
+              <span><strong>{item.role}</strong><small>{item.department} · {item.owner}</small></span>
               <em>{item.version}</em>
             </button>
           ))}
-          <div className="draft-standard"><i>!</i><span><strong>2 份标准待确认</strong><small>AI 已完成结构化，等待招聘负责人审核</small></span></div>
+          <div className="draft-standard"><i>{loading ? "…" : "✓"}</i><span><strong>{loading ? "正在同步岗位库" : "岗位标准已持久化"}</strong><small>新建与修改都会生成可追溯版本</small></span></div>
         </div>
-        <article className="standard-editor">
+        {standard && <article className="standard-editor">
           <div className="editor-head">
-            <div><span>当前标准 · {standard.version}</span><h3>{standard.role}</h3><p>{standard.dept}　更新于 {standard.updated}</p></div>
-            <div><button onClick={() => notify("已复制当前岗位标准")}>复制</button><button className="dark" onClick={() => notify(`${standard.role}标准已保存为新版本`)}>保存版本</button></div>
+            <div><span>当前标准 · {standard.version}</span><h3>{standard.role}</h3><p>{standard.department}　负责人 {standard.owner}　HC {standard.filledHeadcount}/{standard.headcount}</p></div>
+            <div><button onClick={() => navigator.clipboard?.writeText(JSON.stringify(standard, null, 2)).then(() => notify("已复制当前岗位标准"))}>复制</button><button className="dark" disabled={saving} onClick={() => void saveStandard()}>{saving ? "正在保存…" : "保存新版本"}</button></div>
           </div>
           <div className="standard-section">
             <div className="section-index">01</div>
             <div className="standard-content"><h4>硬性筛选门槛 <span>一票否决</span></h4>
-              <div className="gate-list">{standard.gates.map((gate) => <label key={gate}><i>✓</i>{gate}<button aria-label={`删除${gate}`}>×</button></label>)}<button className="add-rule" onClick={() => notify("已添加一条空白硬门槛")}>＋ 添加门槛</button></div>
+              <div className="gate-list">{draftGates.map((gate) => <label key={gate}><i>✓</i>{gate}<button aria-label={`删除${gate}`} onClick={() => draftGates.length > 1 ? setDraftGates((current) => current.filter((item) => item !== gate)) : notify("岗位标准至少保留一项硬门槛")}>×</button></label>)}<button className="add-rule" onClick={addGate}>＋ 添加门槛</button></div>
             </div>
           </div>
           <div className="standard-section">
             <div className="section-index">02</div>
-            <div className="standard-content"><h4>评分维度与权重 <span>合计 100%</span></h4>
-              <div className="weight-list">{standard.weights.map(([label, value]) => (
-                <div key={label}><span>{label}</span><i><em style={{ width: `${Number(value) * 2.15}%` }} /></i><b>{value}%</b></div>
+            <div className="standard-content"><h4>评分维度与权重 <span>合计 {draftWeights.reduce((sum, [, value]) => sum + Number(value), 0)}%</span></h4>
+              <div className="weight-list">{draftWeights.map(([label, value], index) => (
+                <div key={label}><span>{label}</span><i><em style={{ width: `${Number(value) * 2.15}%` }} /></i><label><input aria-label={`${label}权重`} type="number" min="0" max="100" value={value} onChange={(event) => setDraftWeights((current) => current.map((item, itemIndex) => itemIndex === index ? [item[0], Number(event.target.value)] : item))} />%</label></div>
               ))}</div>
             </div>
           </div>
           <div className="standard-section">
             <div className="section-index">03</div>
             <div className="standard-content"><h4>核心考察维度 <span>同步到面试题库</span></h4>
-              <div className="tag-cloud"><span>业务拆解</span><span>复杂项目推进</span><span>数据决策</span><span>领导力</span><span>求职动机</span><button onClick={() => notify("已添加考察维度")}>＋</button></div>
+              <div className="tag-cloud">{standard.interviewDimensions.map((item) => <span key={item}>{item}</span>)}</div>
             </div>
           </div>
-          <div className="standard-foot"><span><i>✓</i> AI 筛选与面试模板已同步此版本</span><button onClick={() => notify("岗位标准 Markdown 已导出")}>导出标准文档 ↓</button></div>
-        </article>
+          <div className="standard-foot"><span><i>✓</i> 简历筛选与面试模板将同步使用此版本</span><button onClick={exportStandard}>导出标准文档 ↓</button></div>
+        </article>}
       </div>
+      {showCreate && (
+        <div className="modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowCreate(false);
+        }}>
+          <section className="workflow-modal" role="dialog" aria-modal="true" aria-label="从 JD 创建岗位标准">
+            <div className="modal-head">
+              <div><span>JOB STANDARD BUILDER</span><h2>从 JD 生成岗位标准</h2><p>填写基础信息和招聘要求，系统将结构化生成完整岗位标准。</p></div>
+              <button aria-label="关闭" onClick={() => setShowCreate(false)}>×</button>
+            </div>
+            <form action={(formData) => void createStandard(formData)} className="standard-create-form">
+              <div className="form-grid">
+                <label>岗位名称<input name="role" required placeholder="例如：高级产品经理" /></label>
+                <label>所属部门<input name="department" required placeholder="例如：产品与增长部" /></label>
+                <label>招聘负责人<input name="owner" placeholder="默认使用当前账号" /></label>
+                <label>招聘人数<input name="headcount" required type="number" min="1" max="999" defaultValue="1" /></label>
+              </div>
+              <label>岗位 JD<textarea name="jdText" required rows={8} placeholder="粘贴岗位职责、任职要求、技能要求等完整 JD 内容…" /></label>
+              <label>补充招聘要求<textarea name="supplementalRequirements" rows={4} placeholder={"每行一项，例如：\n必须有 B 端产品经验\n最近两年跳槽不超过 2 次"} /></label>
+              <div className="message-check"><i>✓</i><span><strong>生成后仍可人工调整</strong><small>保存时自动形成 v1，后续每次修改都会保留新的版本号。</small></span></div>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setShowCreate(false)}>取消</button>
+                <button className="primary" type="submit" disabled={saving}>{saving ? "正在生成…" : "生成并保存标准"}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
