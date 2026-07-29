@@ -5,6 +5,12 @@ import {
   deriveInterviewQuestions,
 } from "../app/lib/job-analysis.ts";
 import {
+  analyzeCandidateProfile,
+  normalizeModelProfile,
+} from "../app/lib/ai-job-analysis.ts";
+import { analyzeInterviewQuestions } from "../app/lib/ai-interview-questions.ts";
+import { analyzeResumeWithModel } from "../app/lib/ai-resume-analysis.ts";
+import {
   buildResumeTags,
   parseResumeText,
   scoreResume,
@@ -35,6 +41,272 @@ test("derives a focused candidate profile from the JD", () => {
   assert.ok(profile.capabilityDetails.every((item) => item.why && item.evidence));
   assert.ok(profile.redFlags.length >= 2);
   assert.ok(profile.openQuestions.some((item) => item.includes("汇报")));
+  assert.equal(profile.analysisMeta.source, "rules");
+  assert.equal(profile.successOutcomes.length, 3);
+  assert.ok(profile.jdEvidence.length >= 2);
+});
+
+test("normalizes a structured model profile and records model provenance", () => {
+  const fallback = deriveCandidateProfile(job);
+  const profile = normalizeModelProfile(
+    {
+      summary: "寻找能把企业服务产品从需求洞察推进到规模化交付的高级产品经理。",
+      hiringRationale: "团队需要补足复杂 B 端产品的端到端负责人。",
+      mission: "主导企业服务产品规划并推动核心客户价值落地。",
+      experience: "5-8 年产品经验，其中至少 3 年 B 端 SaaS 经验",
+      education: "本科及以上，可由强项目证据替代",
+      seniority: "资深个人贡献者或小型项目负责人",
+      backgrounds: ["企业服务 SaaS", "复杂多角色产品"],
+      capabilities: ["产品判断", "业务洞察"],
+      capabilityDetails: [
+        {
+          name: "产品判断",
+          priority: "核心",
+          why: "需要在多方诉求中识别高价值问题。",
+          evidence: "能还原取舍过程及上线后的业务结果。",
+        },
+      ],
+      mustHaves: ["5 年以上产品经验"],
+      bonusSignals: ["有 0→1 经验"],
+      verificationPoints: ["个人职责边界"],
+      targetTitles: ["高级产品经理"],
+      searchKeywords: ["B2B", "SaaS"],
+      redFlags: ["只讲功能交付"],
+      openQuestions: ["首个半年目标是什么？"],
+      successOutcomes: ["90 天形成产品路线图"],
+      companyArchetypes: ["服务中大型客户的 SaaS 公司"],
+      tradeoffs: ["强业务成果可替代部分行业年限"],
+      jdEvidence: [
+        {
+          conclusion: "需要 B 端经验",
+          evidence: "负责 B 端 SaaS 产品规划",
+          confidence: "高",
+        },
+      ],
+    },
+    fallback,
+    "gpt-5.6-sol",
+  );
+
+  assert.equal(profile.analysisMeta.source, "model");
+  assert.equal(profile.analysisMeta.model, "gpt-5.6-sol");
+  assert.match(profile.hiringRationale, /端到端负责人/);
+  assert.equal(profile.capabilityDetails[0].priority, "核心");
+  assert.equal(profile.jdEvidence[0].confidence, "高");
+});
+
+test("calls the Responses API with structured output when a key is configured", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  let requestBody;
+  process.env.AI_PROVIDER = "openai";
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  ...deriveCandidateProfile(job),
+                  analysisMeta: undefined,
+                  summary: "模型生成的高级产品经理画像",
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const profile = await analyzeCandidateProfile(job);
+    assert.equal(profile.analysisMeta.source, "model");
+    assert.equal(profile.summary, "模型生成的高级产品经理画像");
+    assert.equal(profile.analysisMeta.model, "OpenAI · gpt-5.6-sol");
+    assert.equal(requestBody.model, "gpt-5.6-sol");
+    assert.equal(requestBody.store, false);
+    assert.equal(requestBody.text.format.type, "json_schema");
+    assert.equal(requestBody.text.format.strict, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("uses Volcengine Ark when it is selected", async () => {
+  const previousKey = process.env.ARK_API_KEY;
+  const previousModel = process.env.ARK_MODEL;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  let requestBody;
+  process.env.AI_PROVIDER = "volcengine";
+  process.env.ARK_API_KEY = "ark-test-key";
+  process.env.ARK_MODEL = "doubao-seed-2-0-lite-260215";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://ark.cn-beijing.volces.com/api/v3/responses");
+    assert.equal(init?.headers.authorization, "Bearer ark-test-key");
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  ...deriveCandidateProfile(job),
+                  analysisMeta: undefined,
+                  summary: "豆包生成的高级产品经理画像",
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const profile = await analyzeCandidateProfile(job);
+    assert.equal(profile.analysisMeta.source, "model");
+    assert.equal(profile.summary, "豆包生成的高级产品经理画像");
+    assert.equal(
+      profile.analysisMeta.model,
+      "火山方舟 · doubao-seed-2-0-lite-260215",
+    );
+    assert.equal(requestBody.model, "doubao-seed-2-0-lite-260215");
+    assert.equal(requestBody.store, false);
+    assert.equal(requestBody.text.format.type, "json_schema");
+    assert.equal(requestBody.reasoning, undefined);
+    assert.equal(requestBody.thinking.type, "disabled");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.ARK_API_KEY;
+    else process.env.ARK_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.ARK_MODEL;
+    else process.env.ARK_MODEL = previousModel;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("generates JD-specific interview questions with score guides", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  process.env.AI_PROVIDER = "openai";
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        output: [{
+          type: "message",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              questions: Array.from({ length: 8 }, (_, index) => ({
+                category: index === 0 ? "专业能力" : "经历深挖",
+                question: `第 ${index + 1} 道高级产品经理定制问题`,
+                focus: "判断方法与真实贡献",
+                followUp: "请说明当时的关键取舍。",
+                scoreGuide: ["优秀：证据完整", "合格：基本相关", "待验证：缺少证据"],
+              })),
+            }),
+          }],
+        }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  try {
+    const set = await analyzeInterviewQuestions(
+      job,
+      deriveCandidateProfile(job),
+    );
+    assert.equal(set.analysisMeta.source, "model");
+    assert.equal(set.questions.length, 8);
+    assert.equal(set.questions[0].scoreGuide.length, 3);
+    assert.match(set.questions[0].question, /高级产品经理/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("uses model evidence for resume tags and screening recommendation", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  process.env.AI_PROVIDER = "openai";
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        output: [{
+          type: "message",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              school: "浙江大学",
+              education: "本科",
+              years: 7,
+              currentCompany: "某科技公司",
+              currentTitle: "高级产品经理",
+              city: "上海",
+              skills: ["B 端 SaaS", "数据分析"],
+              highlights: ["主导核心指标提升 42%"],
+              tags: ["浙江大学", "7 年经验", "B 端 SaaS"],
+              strengths: ["有 B 端 SaaS 端到端产品经验"],
+              risks: ["团队管理范围需要核验"],
+              failedGates: [],
+              matchedDimensions: ["产品判断", "数据分析"],
+              score: 88,
+              recommendation: "建议进入面试，重点核验复杂项目中的个人决策。",
+            }),
+          }],
+        }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  const parsed = parseResumeText(
+    "姓名：林栩\n手机：13800138000\n浙江大学 本科\n7 年工作经验\n负责 B 端 SaaS 产品与数据分析。",
+    "林栩.pdf",
+  );
+  try {
+    const result = await analyzeResumeWithModel(parsed, "B 端 SaaS 数据分析", {
+      ...job,
+      supplementalRequirements: "",
+      weights: [["产品判断", 50], ["数据分析", 50]],
+    });
+    assert.equal(result.analysisMeta.source, "model");
+    assert.equal(result.score, 88);
+    assert.ok(result.tags.includes("B 端 SaaS"));
+    assert.match(result.recommendation, /建议进入面试/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
 });
 
 test("creates six structured interview questions tied to the role", () => {

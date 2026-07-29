@@ -174,6 +174,12 @@ function enrichDemoJob(job: DemoJob) {
       gates: job.gates,
       interviewDimensions: job.interviewDimensions,
     });
+  candidateProfile.analysisMeta = {
+    source: "demo",
+    model: "GPT-5.6 Sol 演示结果",
+    generatedAt: new Date().toISOString(),
+    warning: "公开演示版展示模型分析效果，使用虚构数据且不会调用真实模型。",
+  };
   return {
     ...job,
     candidateProfile,

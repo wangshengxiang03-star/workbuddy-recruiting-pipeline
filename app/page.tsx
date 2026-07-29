@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type CandidateProfile = {
+  analysisMeta: {
+    source: "model" | "rules" | "demo";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   summary: string;
+  hiringRationale: string;
   mission: string;
   experience: string;
   education: string;
@@ -23,6 +30,14 @@ type CandidateProfile = {
   searchKeywords: string[];
   redFlags: string[];
   openQuestions: string[];
+  successOutcomes: string[];
+  companyArchetypes: string[];
+  tradeoffs: string[];
+  jdEvidence: Array<{
+    conclusion: string;
+    evidence: string;
+    confidence: "高" | "中" | "低";
+  }>;
 };
 
 type InterviewQuestion = {
@@ -30,6 +45,7 @@ type InterviewQuestion = {
   question: string;
   focus: string;
   followUp: string;
+  scoreGuide?: string[];
 };
 
 type Job = {
@@ -45,6 +61,12 @@ type Job = {
   interviewDimensions: string[];
   candidateProfile: CandidateProfile;
   interviewQuestions: InterviewQuestion[];
+  interviewQuestionMeta: {
+    source: "model" | "rules" | "demo";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   updatedAt: string;
 };
 
@@ -56,6 +78,15 @@ type ResumeRecord = {
   score: number | null;
   result: string;
   tags: string[];
+  strengths: string[];
+  risks: string[];
+  recommendation: string;
+  analysisMeta: {
+    source: "model" | "rules";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   errorMessage: string | null;
   createdAt: string;
 };
@@ -105,6 +136,9 @@ function profileMarkdown(job: Job) {
 
 > ${profile.summary}
 
+## 为什么要招这个人
+${profile.hiringRationale}
+
 ## 岗位使命
 ${profile.mission}
 
@@ -127,6 +161,15 @@ ${list(profile.backgrounds)}
 ## 加分信号
 ${list(profile.bonusSignals)}
 
+## 入职成功结果
+${list(profile.successOutcomes)}
+
+## 目标公司类型
+${list(profile.companyArchetypes)}
+
+## 条件取舍
+${list(profile.tradeoffs)}
+
 ## 推荐搜索职位
 ${list(profile.targetTitles)}
 
@@ -139,8 +182,13 @@ ${list(profile.redFlags)}
 ## 待业务确认
 ${list(profile.openQuestions)}
 
+## JD 依据
+${profile.jdEvidence
+  .map((item) => `- [${item.confidence}置信度] ${item.conclusion}\n  - 依据：${item.evidence}`)
+  .join("\n")}
+
 ---
-岗位版本：${job.version}｜更新时间：${formatTime(job.updatedAt)}
+岗位版本：${job.version}｜分析方式：${profile.analysisMeta.model}｜更新时间：${formatTime(job.updatedAt)}
 `;
 }
 
@@ -227,7 +275,11 @@ export default function Home() {
       setSelectedJobId(payload.job.id);
       setShowCreate(false);
       setView("profile");
-      notify("岗位画像和面试问题已生成");
+      notify(
+        payload.job.candidateProfile.analysisMeta.source === "model"
+          ? "模型深度岗位画像已生成"
+          : "岗位画像已生成，当前使用规则降级",
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "岗位创建失败");
     } finally {
@@ -284,7 +336,11 @@ export default function Home() {
     const content = selectedJob.interviewQuestions
       .map(
         (item, index) =>
-          `${index + 1}. 【${item.category}】${item.question}\n考察：${item.focus}\n追问：${item.followUp}`,
+          `${index + 1}. 【${item.category}】${item.question}\n考察：${item.focus}\n追问：${item.followUp}${
+            item.scoreGuide?.length
+              ? `\n评分参考：${item.scoreGuide.join("；")}`
+              : ""
+          }`,
       )
       .join("\n\n");
     await navigator.clipboard.writeText(content);
@@ -319,6 +375,7 @@ export default function Home() {
       const candidateProfile: CandidateProfile = {
         ...selectedJob.candidateProfile,
         summary: String(formData.get("summary") ?? "").trim(),
+        hiringRationale: String(formData.get("hiringRationale") ?? "").trim(),
         mission: String(formData.get("mission") ?? "").trim(),
         experience: String(formData.get("experience") ?? "").trim(),
         education: String(formData.get("education") ?? "").trim(),
@@ -340,6 +397,9 @@ export default function Home() {
         searchKeywords: lines(formData.get("searchKeywords")),
         redFlags: lines(formData.get("redFlags")),
         openQuestions: lines(formData.get("openQuestions")),
+        successOutcomes: lines(formData.get("successOutcomes")),
+        companyArchetypes: lines(formData.get("companyArchetypes")),
+        tradeoffs: lines(formData.get("tradeoffs")),
       };
       await patchJob({ candidateProfile });
       setShowEditProfile(false);
@@ -354,7 +414,7 @@ export default function Home() {
   const reanalyzeJob = async (formData: FormData) => {
     setSaving(true);
     try {
-      await patchJob({
+      const job = await patchJob({
         role: formData.get("role"),
         department: formData.get("department"),
         jdText: formData.get("jdText"),
@@ -362,7 +422,11 @@ export default function Home() {
         regenerateProfile: true,
       });
       setShowReanalyze(false);
-      notify("已根据最新 JD 重新生成岗位画像");
+      notify(
+        job.candidateProfile.analysisMeta.source === "model"
+          ? "模型已根据最新 JD 完成深度分析"
+          : "重新分析完成，当前使用规则降级",
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "重新分析失败");
     } finally {
@@ -616,6 +680,28 @@ function ProfileView({
         </div>
       </section>
 
+      <section className={`analysis-status ${profile.analysisMeta.source}`}>
+        <div>
+          <i>{profile.analysisMeta.source === "model" ? "AI" : profile.analysisMeta.source === "demo" ? "DEMO" : "↳"}</i>
+          <span>
+            <strong>
+              {profile.analysisMeta.source === "model"
+                ? "模型深度分析"
+                : profile.analysisMeta.source === "demo"
+                  ? "模型能力演示"
+                  : "规则降级结果"}
+            </strong>
+            <small>
+              {profile.analysisMeta.model} · 生成于 {formatTime(profile.analysisMeta.generatedAt)}
+            </small>
+          </span>
+        </div>
+        <p>
+          {profile.analysisMeta.warning ||
+            "已根据完整 JD 推理岗位目标、人才条件、证据和招聘风险。"}
+        </p>
+      </section>
+
       <section className="profile-hero">
         <div className="role-monogram">{job.role.slice(0, 1)}</div>
         <div>
@@ -646,6 +732,19 @@ function ProfileView({
       </section>
 
       <div className="profile-grid profile-grid-rich">
+        <article className="profile-card strategy-card">
+          <div className="card-heading"><i>00</i><span><strong>招聘判断摘要</strong><small>先看为什么招、招来以后要形成什么结果</small></span></div>
+          <div className="hiring-rationale">
+            <span>招聘理由</span>
+            <p>{profile.hiringRationale}</p>
+          </div>
+          <div className="outcome-list">
+            {profile.successOutcomes.map((item, index) => (
+              <div key={item}><em>{index === 0 ? "30D" : index === 1 ? "90D" : index === 2 ? "180D" : `${index + 1}`}</em><span>{item}</span></div>
+            ))}
+          </div>
+        </article>
+
         <article className="profile-card must-have-card">
           <div className="card-heading"><i>01</i><span><strong>必须满足</strong><small>不满足时原则上不进入下一轮</small></span></div>
           <div className="must-have-list">
@@ -695,6 +794,12 @@ function ProfileView({
               {profile.searchKeywords.map((item) => <span key={item}>{item}</span>)}
             </div>
           </div>
+          <div className="card-subsection">
+            <strong>目标公司类型</strong>
+            <ul className="compact-list">
+              {profile.companyArchetypes.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
         </article>
 
         <article className="profile-card risk-card">
@@ -702,6 +807,12 @@ function ProfileView({
           <ul>
             {profile.redFlags.map((item) => <li key={item}><i>!</i><span>{item}</span></li>)}
           </ul>
+          <div className="card-subsection">
+            <strong>条件取舍建议</strong>
+            <ul className="compact-list tradeoff-list">
+              {profile.tradeoffs.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
         </article>
 
         <article className="profile-card open-question-card">
@@ -714,6 +825,19 @@ function ProfileView({
             <p className="all-clear">✓ 当前 JD 信息较完整，暂无关键待确认项</p>
           )}
           <button onClick={onReanalyze}>补充信息并重新分析</button>
+        </article>
+
+        <article className="profile-card evidence-card">
+          <div className="card-heading"><i>07</i><span><strong>画像结论与 JD 依据</strong><small>每条关键判断都应能回到输入材料</small></span></div>
+          <div className="evidence-list">
+            {profile.jdEvidence.map((item, index) => (
+              <div key={`${item.conclusion}-${index}`}>
+                <b className={`confidence-${item.confidence}`}>{item.confidence}置信度</b>
+                <strong>{item.conclusion}</strong>
+                <p><i>JD 依据</i>{item.evidence}</p>
+              </div>
+            ))}
+          </div>
         </article>
       </div>
 
@@ -751,6 +875,7 @@ function ProfileEditorModal({
         </div>
         <form action={(formData) => void onSave(formData)}>
           <label>一句话画像<textarea name="summary" required rows={2} defaultValue={profile.summary} /></label>
+          <label>招聘理由<textarea name="hiringRationale" required rows={3} defaultValue={profile.hiringRationale} /></label>
           <label>岗位使命<textarea name="mission" required rows={3} defaultValue={profile.mission} /></label>
           <div className="field-row">
             <label>经验要求<input name="experience" required defaultValue={profile.experience} /></label>
@@ -766,6 +891,9 @@ function ProfileEditorModal({
             <label>搜索关键词 <span>每行一项</span><textarea name="searchKeywords" rows={5} defaultValue={joined(profile.searchKeywords)} /></label>
             <label>风险信号 <span>每行一项</span><textarea name="redFlags" rows={5} defaultValue={joined(profile.redFlags)} /></label>
             <label>待确认问题 <span>每行一项</span><textarea name="openQuestions" rows={5} defaultValue={joined(profile.openQuestions)} /></label>
+            <label>入职成功结果 <span>每行一项</span><textarea name="successOutcomes" rows={5} defaultValue={joined(profile.successOutcomes)} /></label>
+            <label>目标公司类型 <span>每行一项</span><textarea name="companyArchetypes" rows={5} defaultValue={joined(profile.companyArchetypes)} /></label>
+            <label>条件取舍 <span>每行一项</span><textarea name="tradeoffs" rows={5} defaultValue={joined(profile.tradeoffs)} /></label>
           </div>
           <div className="modal-actions">
             <button type="button" onClick={onClose}>取消</button>
@@ -881,7 +1009,17 @@ function ScreeningView({
                 <div className="file-badge">{resume.name.split(".").pop()?.slice(0, 3).toUpperCase()}</div>
                 <div className="resume-main">
                   <div className="resume-title">
-                    <div><strong>{resume.name}</strong><span>{formatTime(resume.createdAt)}</span></div>
+                    <div>
+                      <strong>{resume.name}</strong>
+                      <span>
+                        {formatTime(resume.createdAt)} ·{" "}
+                        {resume.analysisMeta?.source === "model"
+                          ? "火山模型初筛"
+                          : resume.analysisMeta?.source === "rules"
+                            ? "规则降级"
+                            : "演示结果"}
+                      </span>
+                    </div>
                     <em className={scoreTone(resume.score)}>{resume.status}</em>
                   </div>
                   <div className="tag-row">
@@ -889,6 +1027,12 @@ function ScreeningView({
                       <span key={tag}>{tag}</span>
                     ))}
                   </div>
+                  {resume.recommendation && (
+                    <p className="resume-recommendation">{resume.recommendation}</p>
+                  )}
+                  {resume.analysisMeta?.warning && (
+                    <p className="resume-warning">{resume.analysisMeta.warning}</p>
+                  )}
                   {resume.errorMessage && <p className="resume-error">{resume.errorMessage}</p>}
                 </div>
                 <div className={`score-box ${scoreTone(resume.score)}`}>
@@ -912,6 +1056,12 @@ function ScreeningView({
 }
 
 function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
+  const questionMeta = job.interviewQuestionMeta ?? {
+    source: "demo" as const,
+    model: "演示题库",
+    generatedAt: job.updatedAt,
+    warning: "当前展示演示题目；完整站点会调用模型生成定制题库。",
+  };
   return (
     <div className="questions-page">
       <section className="page-intro">
@@ -921,6 +1071,24 @@ function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
           <p>每道问题都包含考察重点和建议追问，面试官拿来即可使用。</p>
         </div>
         <button className="primary-action" onClick={() => void onCopy()}>复制全部问题 <b>⌘</b></button>
+      </section>
+
+      <section className={`analysis-status ${questionMeta.source}`}>
+        <div>
+          <i>{questionMeta.source === "model" ? "AI" : "↳"}</i>
+          <span>
+            <strong>
+              {questionMeta.source === "model" ? "模型定制题库" : "规则模板题库"}
+            </strong>
+            <small>
+              {questionMeta.model} · 生成于 {formatTime(questionMeta.generatedAt)}
+            </small>
+          </span>
+        </div>
+        <p>
+          {questionMeta.warning ||
+            "已根据 JD、硬门槛和岗位画像生成，并附带追问与三级评分参考。"}
+        </p>
       </section>
 
       <section className="question-context">
@@ -943,6 +1111,12 @@ function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
               <div className="question-notes">
                 <p><i>考察</i>{item.focus}</p>
                 <p><i>追问</i>{item.followUp}</p>
+                {item.scoreGuide?.length ? (
+                  <p className="score-guide">
+                    <i>评分</i>
+                    <span>{item.scoreGuide.join("；")}</span>
+                  </p>
+                ) : null}
               </div>
             </div>
           </article>

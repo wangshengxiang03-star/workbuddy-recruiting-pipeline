@@ -1,6 +1,12 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "./index";
-import { activityLogs, candidates, jobs, resumeFiles } from "./schema";
+import {
+  activityLogs,
+  candidates,
+  jobs,
+  modelAnalysisUsage,
+  resumeFiles,
+} from "./schema";
 
 let schemaReady: Promise<void> | null = null;
 
@@ -57,6 +63,17 @@ export function ensureDatabaseSchema() {
         actor_email text,
         created_at integer NOT NULL
       )`),
+      d1.prepare(`CREATE TABLE IF NOT EXISTS model_analysis_usage (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        visitor_key text NOT NULL,
+        created_at integer NOT NULL
+      )`),
+      d1.prepare(
+        "CREATE INDEX IF NOT EXISTS model_analysis_usage_created_at_idx ON model_analysis_usage (created_at)",
+      ),
+      d1.prepare(
+        "CREATE INDEX IF NOT EXISTS model_analysis_usage_visitor_idx ON model_analysis_usage (visitor_key, created_at)",
+      ),
       d1.prepare(`CREATE TABLE IF NOT EXISTS resume_files (
         id text PRIMARY KEY NOT NULL,
         batch_id text NOT NULL,
@@ -357,6 +374,45 @@ export async function updateCandidateFromReview(
 export async function listJobs() {
   await ensureSeedData();
   return getDb().select().from(jobs).orderBy(desc(jobs.updatedAt));
+}
+
+export async function claimModelAnalysisQuota(visitorKey: string) {
+  await ensureDatabaseSchema();
+  const d1 = getDb().$client;
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const perVisitorLimit = Math.max(
+    1,
+    Number.parseInt(process.env.MODEL_DAILY_VISITOR_LIMIT || "5", 10) || 5,
+  );
+  const globalLimit = Math.max(
+    perVisitorLimit,
+    Number.parseInt(process.env.MODEL_DAILY_GLOBAL_LIMIT || "100", 10) || 100,
+  );
+  const [visitorResult, globalResult] = await Promise.all([
+    d1
+      .prepare(
+        "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE visitor_key = ? AND created_at >= ?",
+      )
+      .bind(visitorKey, cutoff)
+      .first<{ count: number }>(),
+    d1
+      .prepare(
+        "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE created_at >= ?",
+      )
+      .bind(cutoff)
+      .first<{ count: number }>(),
+  ]);
+  if (
+    Number(visitorResult?.count ?? 0) >= perVisitorLimit ||
+    Number(globalResult?.count ?? 0) >= globalLimit
+  ) {
+    return false;
+  }
+  await getDb().insert(modelAnalysisUsage).values({
+    visitorKey,
+    createdAt: new Date(),
+  });
+  return true;
 }
 
 export async function listRecentActivity() {

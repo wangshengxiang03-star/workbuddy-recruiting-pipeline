@@ -8,7 +8,14 @@ export type JobAnalysisInput = {
 };
 
 export type CandidateProfile = {
+  analysisMeta: {
+    source: "model" | "rules" | "demo";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   summary: string;
+  hiringRationale: string;
   mission: string;
   experience: string;
   education: string;
@@ -28,6 +35,14 @@ export type CandidateProfile = {
   searchKeywords: string[];
   redFlags: string[];
   openQuestions: string[];
+  successOutcomes: string[];
+  companyArchetypes: string[];
+  tradeoffs: string[];
+  jdEvidence: Array<{
+    conclusion: string;
+    evidence: string;
+    confidence: "高" | "中" | "低";
+  }>;
 };
 
 function unique(values: string[]) {
@@ -130,7 +145,14 @@ export function deriveCandidateProfile(job: JobAnalysisInput): CandidateProfile 
   ]);
 
   return {
+    analysisMeta: {
+      source: "rules",
+      model: "本地规则引擎",
+      generatedAt: new Date().toISOString(),
+      warning: "当前结果由规则引擎生成，建议配置模型后重新分析。",
+    },
     summary: `寻找一位${years ? `具备 ${years} 年以上相关经验、` : ""}能够在${job.department}独立承担核心工作的${job.role}。`,
+    hiringRationale: `该岗位需要在${job.department}补充能够独立承担${job.role}核心工作的成熟人才。`,
     mission,
     experience: years ? `${years} 年以上相关经验` : "以相关项目深度和岗位胜任力为主",
     education,
@@ -152,6 +174,30 @@ export function deriveCandidateProfile(job: JobAnalysisInput): CandidateProfile 
     searchKeywords,
     redFlags,
     openQuestions,
+    successOutcomes: [
+      `在入职 30 天内完成${job.role}相关业务与关键协作关系梳理`,
+      "在 90 天内独立承担核心任务并形成可验证的阶段结果",
+      "在 6 个月内建立稳定的方法、指标或工作机制",
+    ],
+    companyArchetypes: backgrounds.length
+      ? backgrounds.map((item) => `具备${item}的成熟团队`)
+      : ["业务阶段、客户类型与当前岗位相近的公司"],
+    tradeoffs: [
+      "业务场景高度匹配时，可适度放宽行业标签",
+      "有强证据的复杂项目成果时，可弱化单纯年限要求",
+    ],
+    jdEvidence: [
+      {
+        conclusion: mission,
+        evidence: extractResponsibility(job.jdText, job.role, job.department),
+        confidence: "高",
+      },
+      ...mustHaves.slice(0, 3).map((item) => ({
+        conclusion: item,
+        evidence: `JD 或补充要求中明确提及「${item}」`,
+        confidence: "中" as const,
+      })),
+    ],
   };
 }
 

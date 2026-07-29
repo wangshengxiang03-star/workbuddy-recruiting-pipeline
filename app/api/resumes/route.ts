@@ -1,5 +1,6 @@
 import { getChatGPTUser } from "../../chatgpt-auth";
 import {
+  claimModelAnalysisQuota,
   createCandidateFromResume,
   createResumeRecords,
   findCandidateDuplicate,
@@ -10,10 +11,11 @@ import {
   updateResumeRecord,
 } from "../../../db/repository";
 import { getResumeBucket } from "../../../db/storage";
+import { modelAnalysisConfigured } from "../../lib/ai-job-analysis";
+import { analyzeResumeWithModel } from "../../lib/ai-resume-analysis";
 import {
   buildResumeTags,
   type ParsedResume,
-  scoreResume,
 } from "../../lib/resume-processing";
 
 export const runtime = "edge";
@@ -28,6 +30,15 @@ function serializeResume(
   const parsed = (record.parsedData ?? {}) as Partial<ParsedResume> & {
     tags?: string[];
     matchedDimensions?: string[];
+    strengths?: string[];
+    risks?: string[];
+    recommendation?: string;
+    analysisMeta?: {
+      source?: "model" | "rules";
+      model?: string;
+      generatedAt?: string;
+      warning?: string;
+    };
   };
   return {
     id: record.id,
@@ -44,6 +55,15 @@ function serializeResume(
     tags:
       parsed.tags ??
       buildResumeTags(parsed, parsed.matchedDimensions ?? []),
+    strengths: parsed.strengths ?? parsed.highlights ?? [],
+    risks: parsed.risks ?? [],
+    recommendation: parsed.recommendation ?? "",
+    analysisMeta: parsed.analysisMeta ?? {
+      source: "rules",
+      model: "本地规则引擎",
+      generatedAt: record.updatedAt.toISOString(),
+      warning: "该记录尚未经过模型初筛。",
+    },
   };
 }
 
@@ -94,6 +114,23 @@ function reviewRisk(parsed: ParsedResume) {
   if (!parsed.email) notes.push("邮箱仍待补充");
   if (!parsed.years) notes.push("工作年限仍待确认");
   return notes.length ? notes.join("；") : "核心字段已经人工校正，建议面试时核验关键项目经历。";
+}
+
+async function visitorKey(request: Request) {
+  const raw = [
+    request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for") ||
+      "unknown",
+    request.headers.get("user-agent") || "unknown",
+  ].join("|");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(raw),
+  );
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 12)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export async function PATCH(request: Request) {
@@ -162,25 +199,30 @@ export async function PATCH(request: Request) {
     parsed.education,
     `${parsed.years} 年经验`,
   ].join("\n");
-  const scored = scoreResume(parsed, scoringText, job);
+  const modelAllowed = modelAnalysisConfigured()
+    ? await claimModelAnalysisQuota(await visitorKey(request))
+    : true;
+  const analyzed = await analyzeResumeWithModel(parsed, scoringText, job, {
+    modelAllowed,
+    limitWarning: "该访客今日的模型体验次数已用完，本次校正使用规则降级。",
+  });
+  const enriched = analyzed.parsed;
   const candidateValues = {
-    name: parsed.name,
-    initials: initials(parsed.name),
+    name: enriched.name,
+    initials: initials(enriched.name),
     role: job.role,
-    score: scored.score,
-    status: scored.status,
-    tone: scored.tone,
-    school: `${parsed.school} · ${parsed.education}`,
-    company: `${parsed.currentCompany} · ${parsed.currentTitle}`,
-    experience: parsed.years ? `${parsed.years} 年` : "待确认",
-    phone: parsed.phone,
-    email: parsed.email,
-    city: parsed.city,
-    currentTitle: parsed.currentTitle,
-    highlights: parsed.highlights.length
-      ? parsed.highlights
-      : scored.matchedDimensions.map((item) => `${item}相关经历已确认`).slice(0, 3),
-    risk: reviewRisk(parsed),
+    score: analyzed.score,
+    status: analyzed.status,
+    tone: analyzed.tone,
+    school: `${enriched.school} · ${enriched.education}`,
+    company: `${enriched.currentCompany} · ${enriched.currentTitle}`,
+    experience: enriched.years ? `${enriched.years} 年` : "待确认",
+    phone: enriched.phone,
+    email: enriched.email,
+    city: enriched.city,
+    currentTitle: enriched.currentTitle,
+    highlights: analyzed.strengths,
+    risk: analyzed.risks.join("；") || reviewRisk(enriched),
   };
   const now = new Date();
   const candidate = record.candidateId
@@ -203,16 +245,21 @@ export async function PATCH(request: Request) {
   const updated = await updateResumeRecord(record.id, {
     targetRole: job.role,
     parsedData: {
-      ...parsed,
-      failedGates: scored.failedGates,
-      matchedDimensions: scored.matchedDimensions,
-      tags: buildResumeTags(parsed, scored.matchedDimensions),
+      ...enriched,
+      analysisMeta: analyzed.analysisMeta,
+      failedGates: analyzed.failedGates,
+      gateEvidence: analyzed.gateEvidence,
+      matchedDimensions: analyzed.matchedDimensions,
+      tags: analyzed.tags,
+      strengths: analyzed.strengths,
+      risks: analyzed.risks,
+      recommendation: analyzed.recommendation,
     },
     candidateId: candidate.id,
     duplicateOf: null,
-    status: scored.failedGates.length ? "硬门槛淘汰" : "已完成",
-    score: scored.score,
-    result: scored.result,
+    status: analyzed.failedGates.length ? "硬门槛淘汰" : "已完成",
+    score: analyzed.score,
+    result: analyzed.result,
     errorMessage: null,
   });
   return Response.json({

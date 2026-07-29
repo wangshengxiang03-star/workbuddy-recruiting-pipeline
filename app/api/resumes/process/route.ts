@@ -1,5 +1,6 @@
 import { getChatGPTUser } from "../../../chatgpt-auth";
 import {
+  claimModelAnalysisQuota,
   createCandidateFromResume,
   findCandidateDuplicate,
   getResumeRecords,
@@ -7,11 +8,11 @@ import {
   updateResumeRecord,
 } from "../../../../db/repository";
 import { getResumeBucket } from "../../../../db/storage";
+import { modelAnalysisConfigured } from "../../../lib/ai-job-analysis";
+import { analyzeResumeWithModel } from "../../../lib/ai-resume-analysis";
 import {
-  buildResumeTags,
   extractResumeText,
   parseResumeText,
-  scoreResume,
 } from "../../../lib/resume-processing";
 
 export const runtime = "edge";
@@ -42,20 +43,26 @@ function selectJob(
   return jobs[0];
 }
 
-function buildRisk(parsed: ReturnType<typeof parseResumeText>) {
-  const risks = [];
-  if (!parsed.phone) risks.push("未识别到手机号，需人工补充后才能执行双重去重");
-  if (!parsed.email) risks.push("未识别到邮箱");
-  if (!parsed.years) risks.push("工作年限待确认");
-  if (!parsed.currentCompany || parsed.currentCompany.includes("待确认")) {
-    risks.push("当前公司与职位需人工确认");
-  }
-  return risks.length ? risks.join("；") : "暂未发现明显信息缺口，建议面试时核验关键经历。";
-}
-
 function initials(name: string) {
   const value = name.replace(/[^\p{L}\p{N}]/gu, "");
   return value.slice(0, 3).toUpperCase() || "NA";
+}
+
+async function visitorKey(request: Request) {
+  const raw = [
+    request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for") ||
+      "unknown",
+    request.headers.get("user-agent") || "unknown",
+  ].join("|");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(raw),
+  );
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 12)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export async function POST(request: Request) {
@@ -74,6 +81,7 @@ export async function POST(request: Request) {
   }
   const bucket = getResumeBucket();
   const processed = [];
+  const requestVisitorKey = await visitorKey(request);
 
   for (const record of pending) {
     try {
@@ -106,44 +114,53 @@ export async function POST(request: Request) {
       }
 
       const job = selectJob(jobs, record.targetRole, record.originalName, text);
-      const scored = scoreResume(parsed, text, job);
+      const modelAllowed = modelAnalysisConfigured()
+        ? await claimModelAnalysisQuota(requestVisitorKey)
+        : true;
+      const analyzed = await analyzeResumeWithModel(parsed, text, job, {
+        modelAllowed,
+        limitWarning: "该访客今日的模型体验次数已用完，本份简历使用规则降级。",
+      });
+      const enriched = analyzed.parsed;
       const now = new Date();
       const candidateId = crypto.randomUUID();
       const candidate = await createCandidateFromResume({
         id: candidateId,
-        name: parsed.name,
-        initials: initials(parsed.name),
+        name: enriched.name,
+        initials: initials(enriched.name),
         role: job.role,
-        score: scored.score,
-        status: scored.status,
-        tone: scored.tone,
-        school: `${parsed.school} · ${parsed.education}`,
-        company: `${parsed.currentCompany} · ${parsed.currentTitle}`,
-        experience: parsed.years ? `${parsed.years} 年` : "待确认",
+        score: analyzed.score,
+        status: analyzed.status,
+        tone: analyzed.tone,
+        school: `${enriched.school} · ${enriched.education}`,
+        company: `${enriched.currentCompany} · ${enriched.currentTitle}`,
+        experience: enriched.years ? `${enriched.years} 年` : "待确认",
         channel: "批量上传",
-        phone: parsed.phone,
-        email: parsed.email,
-        city: parsed.city,
-        currentTitle: parsed.currentTitle,
-        highlights:
-          parsed.highlights.length > 0
-            ? parsed.highlights
-            : scored.matchedDimensions.map((item) => `${item}相关经历已识别`).slice(0, 3),
-        risk: buildRisk(parsed),
+        phone: enriched.phone,
+        email: enriched.email,
+        city: enriched.city,
+        currentTitle: enriched.currentTitle,
+        highlights: analyzed.strengths,
+        risk: analyzed.risks.join("；"),
         ownerEmail: user?.email ?? null,
         createdAt: now,
         updatedAt: now,
       });
       const updated = await updateResumeRecord(record.id, {
-        status: scored.failedGates.length ? "硬门槛淘汰" : "已完成",
-        score: scored.score,
-        result: scored.result,
+        status: analyzed.failedGates.length ? "硬门槛淘汰" : "已完成",
+        score: analyzed.score,
+        result: analyzed.result,
         extractedText: text.slice(0, 50000),
         parsedData: {
-          ...parsed,
-          failedGates: scored.failedGates,
-          matchedDimensions: scored.matchedDimensions,
-          tags: buildResumeTags(parsed, scored.matchedDimensions),
+          ...enriched,
+          analysisMeta: analyzed.analysisMeta,
+          failedGates: analyzed.failedGates,
+          gateEvidence: analyzed.gateEvidence,
+          matchedDimensions: analyzed.matchedDimensions,
+          tags: analyzed.tags,
+          strengths: analyzed.strengths,
+          risks: analyzed.risks,
+          recommendation: analyzed.recommendation,
         },
         candidateId: candidate.id,
         targetRole: job.role,
