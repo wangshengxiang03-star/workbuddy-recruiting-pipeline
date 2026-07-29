@@ -41,6 +41,34 @@ type JobStandard = {
   status: string;
 };
 
+type ResumeDetail = {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  score: number | null;
+  result: string;
+  errorMessage: string | null;
+  candidateId: string | null;
+  duplicateOf: string | null;
+  extractedText: string;
+  parsedData: {
+    name?: string;
+    phone?: string;
+    email?: string;
+    city?: string;
+    education?: string;
+    school?: string;
+    years?: number;
+    currentCompany?: string;
+    currentTitle?: string;
+    skills?: string[];
+    highlights?: string[];
+    failedGates?: string[];
+    matchedDimensions?: string[];
+  } | null;
+};
+
 const candidates: Candidate[] = [
   {
     id: "candidate-linxu",
@@ -163,6 +191,7 @@ type ModuleProps = {
   active: string;
   notify: (message: string) => void;
   runBatch: () => Promise<void>;
+  refreshLedger: () => Promise<void>;
   batchRunning: boolean;
   setSelected: (candidate: Candidate | null) => void;
   candidateData: Candidate[];
@@ -418,9 +447,13 @@ function JobsPanel({ notify }: Pick<ModuleProps, "notify">) {
   );
 }
 
-function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "notify" | "runBatch" | "batchRunning">) {
+function ResumesPanel({ notify, runBatch, batchRunning, refreshLedger }: Pick<ModuleProps, "notify" | "runBatch" | "batchRunning" | "refreshLedger">) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [detail, setDetail] = useState<ResumeDetail | null>(null);
+  const [detailJobs, setDetailJobs] = useState<string[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailSaving, setDetailSaving] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<Array<{
     id: string;
     name: string;
@@ -440,6 +473,63 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
     void loadUploadedFiles(controller.signal).catch(() => undefined);
     return () => controller.abort();
   }, []);
+  const openDetail = async (id: string) => {
+    setDetailLoading(true);
+    try {
+      const response = await fetch(`/api/resumes?id=${encodeURIComponent(id)}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as {
+        file?: ResumeDetail;
+        jobs?: string[];
+        error?: string;
+      };
+      if (!response.ok || !payload.file) throw new Error(payload.error ?? "解析结果读取失败");
+      setDetail(payload.file);
+      setDetailJobs(payload.jobs ?? []);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "解析结果读取失败");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+  const updateDetailField = (
+    field: keyof NonNullable<ResumeDetail["parsedData"]>,
+    value: string | number,
+  ) => {
+    setDetail((current) => current ? {
+      ...current,
+      parsedData: { ...(current.parsedData ?? {}), [field]: value },
+    } : current);
+  };
+  const saveDetail = async () => {
+    if (!detail) return;
+    setDetailSaving(true);
+    try {
+      const response = await fetch("/api/resumes", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: detail.id,
+          role: detail.role,
+          parsedData: detail.parsedData,
+        }),
+      });
+      const payload = (await response.json()) as {
+        file?: ResumeDetail;
+        duplicate?: { name: string };
+        error?: string;
+      };
+      if (!response.ok || !payload.file) throw new Error(payload.error ?? "校正结果保存失败");
+      setDetail(payload.file);
+      await Promise.all([loadUploadedFiles(), refreshLedger()]);
+      notify(payload.duplicate ? `已识别为${payload.duplicate.name}的重复投递` : "字段已校正，评分和候选人台账已同步");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "校正结果保存失败");
+    } finally {
+      setDetailSaving(false);
+    }
+  };
   const queue: string[][] = [
     ["林栩-高级产品经理.pdf", "高级产品经理", "已完成", "92", "强推荐"],
     ["周玥_增长专家.docx", "用户增长专家", "已完成", "86", "强推荐"],
@@ -453,6 +543,7 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
       batchRunning ? "文本解析" : file.status,
       file.score === null ? "—" : String(file.score),
       batchRunning ? "处理中" : file.result,
+      file.id,
     ]),
   ];
   const handleLocalFiles = async (files: FileList | null) => {
@@ -515,13 +606,54 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
           {batchRunning && <div className="batch-progress"><span><i /></span><b>正在执行硬门槛筛选 · 12 / 18</b><em>预计 38 秒</em></div>}
           <div className="resume-table">
             <div className="resume-row resume-head"><span>文件名</span><span>目标岗位</span><span>处理状态</span><span>得分</span><span>结论</span></div>
-            {queue.map(([file, role, state, score, result]) => <button className="resume-row" key={file} onClick={() => notify(`${file}：已打开结构化解析结果`)}>
+            {queue.map(([file, role, state, score, result, id]) => <button className="resume-row" key={`${file}-${id ?? "demo"}`} onClick={() => id ? void openDetail(id) : notify(`${file}：演示记录暂无原始解析详情`)}>
               <span><i>{file.endsWith(".png") ? "IMG" : file.endsWith(".docx") ? "DOC" : "PDF"}</i><b>{file}</b></span><span>{role}</span><span><em className={state === "已完成" ? "success" : state.includes("淘汰") || state.includes("重复") ? "muted" : "working"}>{state}</em></span><span><strong>{score}</strong></span><span>{result}<b>→</b></span>
             </button>)}
           </div>
           <label className={`drop-zone ${uploading ? "uploading" : ""}`}><input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" disabled={uploading} onChange={(event) => void handleLocalFiles(event.target.files)} /><i>{uploading ? "◌" : "↥"}</i><span><strong>{uploading ? "正在加密入库…" : "继续添加简历"}</strong><small>支持 PDF、Word 和图片；单份不超过 15MB，单批最多 100 份</small></span><b>{uploading ? "请稍候" : "浏览文件"}</b></label>
         </div>
       </div>
+      {(detail || detailLoading) && (
+        <div className="modal-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !detailSaving) setDetail(null);
+        }}>
+          <section className="workflow-modal resume-detail-modal" role="dialog" aria-modal="true" aria-label="简历解析结果审核">
+            <div className="modal-head">
+              <div><span>RESUME REVIEW</span><h2>{detailLoading && !detail ? "正在读取解析结果…" : "审核简历解析结果"}</h2><p>{detail?.name ?? "请稍候"} · {detail?.status ?? "加载中"}</p></div>
+              <button aria-label="关闭" onClick={() => setDetail(null)}>×</button>
+            </div>
+            {detail && <div className="resume-review">
+              <div className="review-summary">
+                <div><span>当前结论</span><strong>{detail.result}</strong></div>
+                <div><span>匹配得分</span><strong>{detail.score ?? "—"}</strong></div>
+                <div><span>处理状态</span><strong>{detail.status}</strong></div>
+              </div>
+              {detail.errorMessage && <div className="review-alert"><i>!</i><span><strong>需要人工处理</strong><small>{detail.errorMessage}</small></span></div>}
+              <div className="review-grid">
+                <label>候选人姓名<input value={detail.parsedData?.name ?? ""} onChange={(event) => updateDetailField("name", event.target.value)} /></label>
+                <label>目标岗位<select value={detail.role} onChange={(event) => setDetail({ ...detail, role: event.target.value })}>{detailJobs.map((role) => <option key={role}>{role}</option>)}</select></label>
+                <label>手机号<input value={detail.parsedData?.phone ?? ""} onChange={(event) => updateDetailField("phone", event.target.value)} /></label>
+                <label>邮箱<input value={detail.parsedData?.email ?? ""} onChange={(event) => updateDetailField("email", event.target.value)} /></label>
+                <label>所在城市<input value={detail.parsedData?.city ?? ""} onChange={(event) => updateDetailField("city", event.target.value)} /></label>
+                <label>工作年限<input type="number" min="0" max="50" value={detail.parsedData?.years ?? 0} onChange={(event) => updateDetailField("years", Number(event.target.value))} /></label>
+                <label>最高学历<input value={detail.parsedData?.education ?? ""} onChange={(event) => updateDetailField("education", event.target.value)} /></label>
+                <label>毕业院校<input value={detail.parsedData?.school ?? ""} onChange={(event) => updateDetailField("school", event.target.value)} /></label>
+                <label>当前公司<input value={detail.parsedData?.currentCompany ?? ""} onChange={(event) => updateDetailField("currentCompany", event.target.value)} /></label>
+                <label>当前职位<input value={detail.parsedData?.currentTitle ?? ""} onChange={(event) => updateDetailField("currentTitle", event.target.value)} /></label>
+              </div>
+              <div className="review-evidence">
+                <div><span>匹配维度</span><p>{detail.parsedData?.matchedDimensions?.join("、") || "等待人工确认后重新评分"}</p></div>
+                <div><span>未通过门槛</span><p>{detail.parsedData?.failedGates?.join("、") || "无"}</p></div>
+              </div>
+              <details className="source-preview"><summary>查看提取原文</summary><pre>{detail.extractedText || "当前文件尚无可用文本，图片简历需等待 OCR 或人工录入字段。"}</pre></details>
+            </div>}
+            <div className="modal-actions">
+              <button onClick={() => setDetail(null)}>取消</button>
+              <button className="primary" disabled={!detail || detailSaving} onClick={() => void saveDetail()}>{detailSaving ? "正在重新评分…" : "保存校正并重新评分"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -617,7 +749,7 @@ function ReportsPanel({ notify }: Pick<ModuleProps, "notify">) {
 
 function ModuleView(props: ModuleProps) {
   if (props.active === "jobs") return <JobsPanel notify={props.notify} />;
-  if (props.active === "resumes") return <ResumesPanel notify={props.notify} runBatch={props.runBatch} batchRunning={props.batchRunning} />;
+  if (props.active === "resumes") return <ResumesPanel notify={props.notify} runBatch={props.runBatch} batchRunning={props.batchRunning} refreshLedger={props.refreshLedger} />;
   if (props.active === "candidates") return <CandidatesPanel setSelected={props.setSelected} notify={props.notify} candidateData={props.candidateData} />;
   if (props.active === "interviews") return <InterviewsPanel notify={props.notify} setSelected={props.setSelected} candidateData={props.candidateData} />;
   if (props.active === "talent") return <TalentPanel setSelected={props.setSelected} notify={props.notify} candidateData={props.candidateData} />;
@@ -643,6 +775,24 @@ export default function Home() {
     "本周招聘看板已更新",
   ]);
 
+  const refreshLedger = async (signal?: AbortSignal) => {
+    const response = await fetch("/api/candidates", {
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok) throw new Error("台账读取失败");
+    const payload = (await response.json()) as {
+      candidates: Candidate[];
+      activity: string[];
+    };
+    setCandidateData(payload.candidates.map((candidate) => ({
+      ...candidate,
+      updated: relativeUpdateLabel(candidate.updated),
+    })));
+    if (payload.activity.length) setActivityLog(payload.activity);
+    setDataSource("cloud");
+  };
+
   useEffect(() => {
     try {
       const storedRole = window.localStorage.getItem("workbuddy-demo-role");
@@ -660,28 +810,9 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const loadLedger = async () => {
-      try {
-        const response = await fetch("/api/candidates", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("台账读取失败");
-        const payload = (await response.json()) as {
-          candidates: Candidate[];
-          activity: string[];
-        };
-        setCandidateData(payload.candidates.map((candidate) => ({
-          ...candidate,
-          updated: relativeUpdateLabel(candidate.updated),
-        })));
-        if (payload.activity.length) setActivityLog(payload.activity);
-        setDataSource("cloud");
-      } catch (error) {
-        if ((error as Error).name !== "AbortError") setDataSource("demo");
-      }
-    };
-    void loadLedger();
+    void refreshLedger(controller.signal).catch((error) => {
+      if ((error as Error).name !== "AbortError") setDataSource("demo");
+    });
     return () => controller.abort();
   }, []);
 
@@ -710,19 +841,7 @@ export default function Home() {
         summary?: { total: number; completed: number; duplicates: number; manual: number };
       };
       if (!response.ok) throw new Error(payload.error ?? "简历处理失败");
-      const ledgerResponse = await fetch("/api/candidates", { cache: "no-store" });
-      if (ledgerResponse.ok) {
-        const ledger = (await ledgerResponse.json()) as {
-          candidates: Candidate[];
-          activity: string[];
-        };
-        setCandidateData(ledger.candidates.map((candidate) => ({
-          ...candidate,
-          updated: relativeUpdateLabel(candidate.updated),
-        })));
-        if (ledger.activity.length) setActivityLog(ledger.activity);
-        setDataSource("cloud");
-      }
+      await refreshLedger();
       setBatchRunning(false);
       setBatchDone(true);
       if (payload.summary) {
@@ -989,6 +1108,7 @@ export default function Home() {
               active={active}
               notify={notify}
               runBatch={runBatch}
+              refreshLedger={refreshLedger}
               batchRunning={batchRunning}
               setSelected={setSelected}
               candidateData={candidateData}

@@ -300,6 +300,48 @@ export async function updateCandidateStatus(
   return updated[0];
 }
 
+export async function updateCandidateFromReview(
+  id: string,
+  values: Partial<
+    Pick<
+      typeof candidates.$inferInsert,
+      | "name"
+      | "initials"
+      | "role"
+      | "score"
+      | "status"
+      | "tone"
+      | "school"
+      | "company"
+      | "experience"
+      | "phone"
+      | "email"
+      | "city"
+      | "currentTitle"
+      | "highlights"
+      | "risk"
+    >
+  >,
+  actorEmail: string | null,
+) {
+  await ensureDatabaseSchema();
+  const db = getDb();
+  const now = new Date();
+  const updated = await db
+    .update(candidates)
+    .set({ ...values, updatedAt: now })
+    .where(eq(candidates.id, id))
+    .returning();
+  if (!updated[0]) return null;
+  await db.insert(activityLogs).values({
+    candidateId: id,
+    action: `${updated[0].name}的简历字段已人工校正并重新评分`,
+    actorEmail,
+    createdAt: now,
+  });
+  return updated[0];
+}
+
 export async function listJobs() {
   await ensureSeedData();
   return getDb().select().from(jobs).orderBy(desc(jobs.updatedAt));
