@@ -5,6 +5,10 @@ import {
   deriveInterviewQuestions,
 } from "../app/lib/job-analysis.ts";
 import {
+  analyzeCandidateProfile,
+  normalizeModelProfile,
+} from "../app/lib/ai-job-analysis.ts";
+import {
   buildResumeTags,
   parseResumeText,
   scoreResume,
@@ -35,6 +39,103 @@ test("derives a focused candidate profile from the JD", () => {
   assert.ok(profile.capabilityDetails.every((item) => item.why && item.evidence));
   assert.ok(profile.redFlags.length >= 2);
   assert.ok(profile.openQuestions.some((item) => item.includes("汇报")));
+  assert.equal(profile.analysisMeta.source, "rules");
+  assert.equal(profile.successOutcomes.length, 3);
+  assert.ok(profile.jdEvidence.length >= 2);
+});
+
+test("normalizes a structured model profile and records model provenance", () => {
+  const fallback = deriveCandidateProfile(job);
+  const profile = normalizeModelProfile(
+    {
+      summary: "寻找能把企业服务产品从需求洞察推进到规模化交付的高级产品经理。",
+      hiringRationale: "团队需要补足复杂 B 端产品的端到端负责人。",
+      mission: "主导企业服务产品规划并推动核心客户价值落地。",
+      experience: "5-8 年产品经验，其中至少 3 年 B 端 SaaS 经验",
+      education: "本科及以上，可由强项目证据替代",
+      seniority: "资深个人贡献者或小型项目负责人",
+      backgrounds: ["企业服务 SaaS", "复杂多角色产品"],
+      capabilities: ["产品判断", "业务洞察"],
+      capabilityDetails: [
+        {
+          name: "产品判断",
+          priority: "核心",
+          why: "需要在多方诉求中识别高价值问题。",
+          evidence: "能还原取舍过程及上线后的业务结果。",
+        },
+      ],
+      mustHaves: ["5 年以上产品经验"],
+      bonusSignals: ["有 0→1 经验"],
+      verificationPoints: ["个人职责边界"],
+      targetTitles: ["高级产品经理"],
+      searchKeywords: ["B2B", "SaaS"],
+      redFlags: ["只讲功能交付"],
+      openQuestions: ["首个半年目标是什么？"],
+      successOutcomes: ["90 天形成产品路线图"],
+      companyArchetypes: ["服务中大型客户的 SaaS 公司"],
+      tradeoffs: ["强业务成果可替代部分行业年限"],
+      jdEvidence: [
+        {
+          conclusion: "需要 B 端经验",
+          evidence: "负责 B 端 SaaS 产品规划",
+          confidence: "高",
+        },
+      ],
+    },
+    fallback,
+    "gpt-5.6-sol",
+  );
+
+  assert.equal(profile.analysisMeta.source, "model");
+  assert.equal(profile.analysisMeta.model, "gpt-5.6-sol");
+  assert.match(profile.hiringRationale, /端到端负责人/);
+  assert.equal(profile.capabilityDetails[0].priority, "核心");
+  assert.equal(profile.jdEvidence[0].confidence, "高");
+});
+
+test("calls the Responses API with structured output when a key is configured", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  let requestBody;
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  ...deriveCandidateProfile(job),
+                  analysisMeta: undefined,
+                  summary: "模型生成的高级产品经理画像",
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const profile = await analyzeCandidateProfile(job);
+    assert.equal(profile.analysisMeta.source, "model");
+    assert.equal(profile.summary, "模型生成的高级产品经理画像");
+    assert.equal(requestBody.model, "gpt-5.6-sol");
+    assert.equal(requestBody.store, false);
+    assert.equal(requestBody.text.format.type, "json_schema");
+    assert.equal(requestBody.text.format.strict, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
 });
 
 test("creates six structured interview questions tied to the role", () => {

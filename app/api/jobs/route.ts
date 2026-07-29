@@ -9,6 +9,7 @@ import {
   deriveInterviewQuestions,
 } from "../../lib/job-analysis";
 import type { CandidateProfile } from "../../lib/job-analysis";
+import { analyzeCandidateProfile } from "../../lib/ai-job-analysis";
 
 export const runtime = "edge";
 
@@ -113,7 +114,7 @@ export async function POST(request: Request) {
 
   const user = await getChatGPTUser();
   const standard = deriveStandard(body);
-  const profile = deriveCandidateProfile({
+  const profile = await analyzeCandidateProfile({
     role: body.role.trim(),
     department: body.department.trim(),
     jdText: body.jdText.trim(),
@@ -172,7 +173,7 @@ export async function PATCH(request: Request) {
       })
     : null;
   const regeneratedProfile = nextStandard
-    ? deriveCandidateProfile({
+    ? await analyzeCandidateProfile({
         role: nextRole,
         department: nextDepartment,
         jdText: nextJd,
