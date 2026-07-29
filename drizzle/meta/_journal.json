@@ -22,6 +22,13 @@
       "when": 1785252932376,
       "tag": "0002_amazing_bloodaxe",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785291363684,
+      "tag": "0003_keen_orphan",
+      "breakpoints": true
     }
   ]
 }

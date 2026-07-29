@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "./index";
 import { activityLogs, candidates, jobs, resumeFiles } from "./schema";
 
@@ -22,6 +22,10 @@ export function ensureDatabaseSchema() {
         company text NOT NULL,
         experience text NOT NULL,
         channel text NOT NULL,
+        phone text NOT NULL DEFAULT '',
+        email text NOT NULL DEFAULT '',
+        city text NOT NULL DEFAULT '',
+        current_title text NOT NULL DEFAULT '',
         highlights text NOT NULL,
         risk text NOT NULL,
         owner_email text,
@@ -62,6 +66,11 @@ export function ensureDatabaseSchema() {
         status text NOT NULL DEFAULT '已入库',
         score integer,
         result text,
+        extracted_text text,
+        parsed_data text,
+        candidate_id text,
+        duplicate_of text,
+        error_message text,
         uploaded_by text,
         created_at integer NOT NULL,
         updated_at integer NOT NULL
@@ -86,6 +95,37 @@ export function ensureDatabaseSchema() {
           "ALTER TABLE jobs ADD COLUMN interview_dimensions text NOT NULL DEFAULT '[]'",
         )
         .run();
+    }
+
+    const candidateColumns = await d1.prepare("PRAGMA table_info(candidates)").all<{
+      name: string;
+    }>();
+    const candidateColumnNames = new Set(
+      (candidateColumns.results as Array<{ name: string }>).map((column) => column.name),
+    );
+    for (const [name, sql] of [
+      ["phone", "ALTER TABLE candidates ADD COLUMN phone text NOT NULL DEFAULT ''"],
+      ["email", "ALTER TABLE candidates ADD COLUMN email text NOT NULL DEFAULT ''"],
+      ["city", "ALTER TABLE candidates ADD COLUMN city text NOT NULL DEFAULT ''"],
+      ["current_title", "ALTER TABLE candidates ADD COLUMN current_title text NOT NULL DEFAULT ''"],
+    ] as const) {
+      if (!candidateColumnNames.has(name)) await d1.prepare(sql).run();
+    }
+
+    const resumeColumns = await d1.prepare("PRAGMA table_info(resume_files)").all<{
+      name: string;
+    }>();
+    const resumeColumnNames = new Set(
+      (resumeColumns.results as Array<{ name: string }>).map((column) => column.name),
+    );
+    for (const [name, sql] of [
+      ["extracted_text", "ALTER TABLE resume_files ADD COLUMN extracted_text text"],
+      ["parsed_data", "ALTER TABLE resume_files ADD COLUMN parsed_data text"],
+      ["candidate_id", "ALTER TABLE resume_files ADD COLUMN candidate_id text"],
+      ["duplicate_of", "ALTER TABLE resume_files ADD COLUMN duplicate_of text"],
+      ["error_message", "ALTER TABLE resume_files ADD COLUMN error_message text"],
+    ] as const) {
+      if (!resumeColumnNames.has(name)) await d1.prepare(sql).run();
     }
   })().catch((error) => {
     schemaReady = null;
@@ -289,6 +329,59 @@ export async function listResumeRecords(limit = 50) {
     .from(resumeFiles)
     .orderBy(desc(resumeFiles.createdAt))
     .limit(limit);
+}
+
+export async function getResumeRecords(ids?: string[]) {
+  await ensureDatabaseSchema();
+  if (!ids?.length) {
+    return getDb()
+      .select()
+      .from(resumeFiles)
+      .orderBy(desc(resumeFiles.createdAt))
+      .limit(100);
+  }
+  return getDb().select().from(resumeFiles).where(inArray(resumeFiles.id, ids));
+}
+
+export async function updateResumeRecord(
+  id: string,
+  values: Partial<typeof resumeFiles.$inferInsert>,
+) {
+  await ensureDatabaseSchema();
+  const updated = await getDb()
+    .update(resumeFiles)
+    .set({ ...values, updatedAt: new Date() })
+    .where(eq(resumeFiles.id, id))
+    .returning();
+  return updated[0] ?? null;
+}
+
+export async function findCandidateDuplicate(name: string, phone: string) {
+  await ensureSeedData();
+  if (!name || !phone) return null;
+  const matches = await getDb()
+    .select()
+    .from(candidates)
+    .where(and(eq(candidates.name, name), eq(candidates.phone, phone)))
+    .limit(1);
+  return matches[0] ?? null;
+}
+
+export async function createCandidateFromResume(
+  candidate: typeof candidates.$inferInsert,
+) {
+  await ensureDatabaseSchema();
+  const db = getDb();
+  const created = await db.insert(candidates).values(candidate).returning();
+  if (created[0]) {
+    await db.insert(activityLogs).values({
+      candidateId: created[0].id,
+      action: `${created[0].name}完成简历解析并进入「${created[0].status}」`,
+      actorEmail: created[0].ownerEmail,
+      createdAt: new Date(),
+    });
+  }
+  return created[0];
 }
 
 export async function createJobStandard(

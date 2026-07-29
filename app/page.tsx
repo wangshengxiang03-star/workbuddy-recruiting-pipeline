@@ -162,7 +162,7 @@ function ScoreRing({ score, small = false }: { score: number; small?: boolean })
 type ModuleProps = {
   active: string;
   notify: (message: string) => void;
-  runBatch: () => void;
+  runBatch: () => Promise<void>;
   batchRunning: boolean;
   setSelected: (candidate: Candidate | null) => void;
   candidateData: Candidate[];
@@ -429,12 +429,15 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
     score: number | null;
     result: string;
   }>>([]);
+  const loadUploadedFiles = async (signal?: AbortSignal) => {
+    const response = await fetch("/api/resumes", { cache: "no-store", signal });
+    if (!response.ok) throw new Error("简历队列读取失败");
+    const payload = (await response.json()) as { files: typeof uploadedFiles };
+    setUploadedFiles(payload.files);
+  };
   useEffect(() => {
     const controller = new AbortController();
-    void fetch("/api/resumes", { cache: "no-store", signal: controller.signal })
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((payload: { files: typeof uploadedFiles }) => setUploadedFiles(payload.files))
-      .catch(() => undefined);
+    void loadUploadedFiles(controller.signal).catch(() => undefined);
     return () => controller.abort();
   }, []);
   const queue: string[][] = [
@@ -471,8 +474,9 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
         throw new Error(payload.error ?? "简历入库失败");
       }
       setUploadedFiles((current) => [...payload.files!, ...current]);
-      notify(`${payload.files.length} 份简历已安全入库，开始执行解析队列`);
-      runBatch();
+      notify(`${payload.files.length} 份简历已安全入库，开始执行私有解析`);
+      await runBatch();
+      await loadUploadedFiles();
     } catch (error) {
       notify(error instanceof Error ? error.message : "简历入库失败，请稍后重试");
     } finally {
@@ -507,7 +511,7 @@ function ResumesPanel({ notify, runBatch, batchRunning }: Pick<ModuleProps, "not
           <div className="local-note"><i>⌂</i><span><strong>文件已进入私有安全存储</strong><small>按日期与批次隔离归档</small></span></div>
         </aside>
         <div className="queue-panel">
-          <div className="panel-title"><div><span>当前批次</span><strong>文件处理队列</strong></div><div className="queue-actions"><button onClick={() => notify("筛选结果 CSV 已导出")}>导出结果</button><button onClick={runBatch}>重新运行</button></div></div>
+          <div className="panel-title"><div><span>当前批次</span><strong>文件处理队列</strong></div><div className="queue-actions"><button onClick={() => notify("筛选结果 CSV 已导出")}>导出结果</button><button onClick={() => void runBatch().then(() => loadUploadedFiles())}>重新运行</button></div></div>
           {batchRunning && <div className="batch-progress"><span><i /></span><b>正在执行硬门槛筛选 · 12 / 18</b><em>预计 38 秒</em></div>}
           <div className="resume-table">
             <div className="resume-row resume-head"><span>文件名</span><span>目标岗位</span><span>处理状态</span><span>得分</span><span>结论</span></div>
@@ -691,14 +695,45 @@ export default function Home() {
     window.setTimeout(() => setToast(""), 2600);
   };
 
-  const runBatch = () => {
+  const runBatch = async () => {
     setBatchRunning(true);
     setBatchDone(false);
-    window.setTimeout(() => {
+    try {
+      const response = await fetch("/api/resumes/process", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        message?: string;
+        summary?: { total: number; completed: number; duplicates: number; manual: number };
+      };
+      if (!response.ok) throw new Error(payload.error ?? "简历处理失败");
+      const ledgerResponse = await fetch("/api/candidates", { cache: "no-store" });
+      if (ledgerResponse.ok) {
+        const ledger = (await ledgerResponse.json()) as {
+          candidates: Candidate[];
+          activity: string[];
+        };
+        setCandidateData(ledger.candidates.map((candidate) => ({
+          ...candidate,
+          updated: relativeUpdateLabel(candidate.updated),
+        })));
+        if (ledger.activity.length) setActivityLog(ledger.activity);
+        setDataSource("cloud");
+      }
       setBatchRunning(false);
       setBatchDone(true);
-      notify("18 份新增简历已完成解析与初筛");
-    }, 1600);
+      if (payload.summary) {
+        notify(`已处理 ${payload.summary.total} 份：完成 ${payload.summary.completed}、重复 ${payload.summary.duplicates}、待人工 ${payload.summary.manual}`);
+      } else {
+        notify(payload.message ?? "没有待处理的简历");
+      }
+    } catch (error) {
+      setBatchRunning(false);
+      notify(error instanceof Error ? error.message : "简历处理失败，请稍后重试");
+    }
   };
 
   const addActivity = (message: string) => {
