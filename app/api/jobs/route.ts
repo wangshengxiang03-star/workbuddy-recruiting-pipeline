@@ -19,7 +19,8 @@ import {
   modelAnalysisConfigured,
 } from "../../lib/ai-job-analysis";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
+export const maxDuration = 120;
 
 type JobPayload = {
   id?: string;

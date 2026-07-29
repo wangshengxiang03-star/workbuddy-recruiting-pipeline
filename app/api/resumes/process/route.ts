@@ -15,7 +15,8 @@ import {
   parseResumeText,
 } from "../../../lib/resume-processing";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 function selectJob(
   jobs: Awaited<ReturnType<typeof listJobs>>,

@@ -18,7 +18,8 @@ import {
   type ParsedResume,
 } from "../../lib/resume-processing";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_BATCH_FILES = 100;

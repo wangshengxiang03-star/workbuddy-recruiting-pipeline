@@ -14,9 +14,9 @@ export function ensureDatabaseSchema() {
   if (schemaReady) return schemaReady;
   schemaReady = (async () => {
     const db = getDb();
-    const d1 = db.$client;
-    await d1.batch([
-      d1.prepare(`CREATE TABLE IF NOT EXISTS candidates (
+    const client = db.$client;
+    await client.batch([
+      `CREATE TABLE IF NOT EXISTS candidates (
         id text PRIMARY KEY NOT NULL,
         name text NOT NULL,
         initials text NOT NULL,
@@ -37,8 +37,8 @@ export function ensureDatabaseSchema() {
         owner_email text,
         created_at integer NOT NULL,
         updated_at integer NOT NULL
-      )`),
-      d1.prepare(`CREATE TABLE IF NOT EXISTS jobs (
+      )`,
+      `CREATE TABLE IF NOT EXISTS jobs (
         id text PRIMARY KEY NOT NULL,
         role text NOT NULL,
         department text NOT NULL,
@@ -55,26 +55,22 @@ export function ensureDatabaseSchema() {
         status text NOT NULL DEFAULT 'active',
         created_at integer NOT NULL,
         updated_at integer NOT NULL
-      )`),
-      d1.prepare(`CREATE TABLE IF NOT EXISTS activity_logs (
+      )`,
+      `CREATE TABLE IF NOT EXISTS activity_logs (
         id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
         candidate_id text,
         action text NOT NULL,
         actor_email text,
         created_at integer NOT NULL
-      )`),
-      d1.prepare(`CREATE TABLE IF NOT EXISTS model_analysis_usage (
+      )`,
+      `CREATE TABLE IF NOT EXISTS model_analysis_usage (
         id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
         visitor_key text NOT NULL,
         created_at integer NOT NULL
-      )`),
-      d1.prepare(
-        "CREATE INDEX IF NOT EXISTS model_analysis_usage_created_at_idx ON model_analysis_usage (created_at)",
-      ),
-      d1.prepare(
-        "CREATE INDEX IF NOT EXISTS model_analysis_usage_visitor_idx ON model_analysis_usage (visitor_key, created_at)",
-      ),
-      d1.prepare(`CREATE TABLE IF NOT EXISTS resume_files (
+      )`,
+      "CREATE INDEX IF NOT EXISTS model_analysis_usage_created_at_idx ON model_analysis_usage (created_at)",
+      "CREATE INDEX IF NOT EXISTS model_analysis_usage_visitor_idx ON model_analysis_usage (visitor_key, created_at)",
+      `CREATE TABLE IF NOT EXISTS resume_files (
         id text PRIMARY KEY NOT NULL,
         batch_id text NOT NULL,
         original_name text NOT NULL,
@@ -93,44 +89,34 @@ export function ensureDatabaseSchema() {
         uploaded_by text,
         created_at integer NOT NULL,
         updated_at integer NOT NULL
-      )`),
-      d1.prepare(
-        "CREATE UNIQUE INDEX IF NOT EXISTS resume_files_storage_key_unique ON resume_files (storage_key)",
-      ),
-    ]);
+      )`,
+      "CREATE UNIQUE INDEX IF NOT EXISTS resume_files_storage_key_unique ON resume_files (storage_key)",
+    ], "write");
 
-    const jobColumns = await d1.prepare("PRAGMA table_info(jobs)").all<{
-      name: string;
-    }>();
+    const jobColumns = await client.execute("PRAGMA table_info(jobs)");
     const columnNames = new Set(
-      (jobColumns.results as Array<{ name: string }>).map((column) => column.name),
+      jobColumns.rows.map((column) => String(column.name)),
     );
     if (!columnNames.has("jd_text")) {
-      await d1.prepare("ALTER TABLE jobs ADD COLUMN jd_text text NOT NULL DEFAULT ''").run();
+      await client.execute("ALTER TABLE jobs ADD COLUMN jd_text text NOT NULL DEFAULT ''");
     }
     if (!columnNames.has("interview_dimensions")) {
-      await d1
-        .prepare(
-          "ALTER TABLE jobs ADD COLUMN interview_dimensions text NOT NULL DEFAULT '[]'",
-        )
-        .run();
+      await client.execute(
+        "ALTER TABLE jobs ADD COLUMN interview_dimensions text NOT NULL DEFAULT '[]'",
+      );
     }
     if (!columnNames.has("supplemental_requirements")) {
-      await d1
-        .prepare(
-          "ALTER TABLE jobs ADD COLUMN supplemental_requirements text NOT NULL DEFAULT ''",
-        )
-        .run();
+      await client.execute(
+        "ALTER TABLE jobs ADD COLUMN supplemental_requirements text NOT NULL DEFAULT ''",
+      );
     }
     if (!columnNames.has("candidate_profile")) {
-      await d1.prepare("ALTER TABLE jobs ADD COLUMN candidate_profile text").run();
+      await client.execute("ALTER TABLE jobs ADD COLUMN candidate_profile text");
     }
 
-    const candidateColumns = await d1.prepare("PRAGMA table_info(candidates)").all<{
-      name: string;
-    }>();
+    const candidateColumns = await client.execute("PRAGMA table_info(candidates)");
     const candidateColumnNames = new Set(
-      (candidateColumns.results as Array<{ name: string }>).map((column) => column.name),
+      candidateColumns.rows.map((column) => String(column.name)),
     );
     for (const [name, sql] of [
       ["phone", "ALTER TABLE candidates ADD COLUMN phone text NOT NULL DEFAULT ''"],
@@ -138,14 +124,12 @@ export function ensureDatabaseSchema() {
       ["city", "ALTER TABLE candidates ADD COLUMN city text NOT NULL DEFAULT ''"],
       ["current_title", "ALTER TABLE candidates ADD COLUMN current_title text NOT NULL DEFAULT ''"],
     ] as const) {
-      if (!candidateColumnNames.has(name)) await d1.prepare(sql).run();
+      if (!candidateColumnNames.has(name)) await client.execute(sql);
     }
 
-    const resumeColumns = await d1.prepare("PRAGMA table_info(resume_files)").all<{
-      name: string;
-    }>();
+    const resumeColumns = await client.execute("PRAGMA table_info(resume_files)");
     const resumeColumnNames = new Set(
-      (resumeColumns.results as Array<{ name: string }>).map((column) => column.name),
+      resumeColumns.rows.map((column) => String(column.name)),
     );
     for (const [name, sql] of [
       ["extracted_text", "ALTER TABLE resume_files ADD COLUMN extracted_text text"],
@@ -154,7 +138,7 @@ export function ensureDatabaseSchema() {
       ["duplicate_of", "ALTER TABLE resume_files ADD COLUMN duplicate_of text"],
       ["error_message", "ALTER TABLE resume_files ADD COLUMN error_message text"],
     ] as const) {
-      if (!resumeColumnNames.has(name)) await d1.prepare(sql).run();
+      if (!resumeColumnNames.has(name)) await client.execute(sql);
     }
   })().catch((error) => {
     schemaReady = null;
@@ -378,7 +362,7 @@ export async function listJobs() {
 
 export async function claimModelAnalysisQuota(visitorKey: string) {
   await ensureDatabaseSchema();
-  const d1 = getDb().$client;
+  const client = getDb().$client;
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const perVisitorLimit = Math.max(
     1,
@@ -389,22 +373,20 @@ export async function claimModelAnalysisQuota(visitorKey: string) {
     Number.parseInt(process.env.MODEL_DAILY_GLOBAL_LIMIT || "100", 10) || 100,
   );
   const [visitorResult, globalResult] = await Promise.all([
-    d1
-      .prepare(
-        "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE visitor_key = ? AND created_at >= ?",
-      )
-      .bind(visitorKey, cutoff)
-      .first<{ count: number }>(),
-    d1
-      .prepare(
-        "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE created_at >= ?",
-      )
-      .bind(cutoff)
-      .first<{ count: number }>(),
+    client.execute({
+      sql: "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE visitor_key = ? AND created_at >= ?",
+      args: [visitorKey, cutoff],
+    }),
+    client.execute({
+      sql: "SELECT COUNT(*) AS count FROM model_analysis_usage WHERE created_at >= ?",
+      args: [cutoff],
+    }),
   ]);
+  const visitorCount = Number(visitorResult.rows[0]?.count ?? 0);
+  const globalCount = Number(globalResult.rows[0]?.count ?? 0);
   if (
-    Number(visitorResult?.count ?? 0) >= perVisitorLimit ||
-    Number(globalResult?.count ?? 0) >= globalLimit
+    visitorCount >= perVisitorLimit ||
+    globalCount >= globalLimit
   ) {
     return false;
   }
