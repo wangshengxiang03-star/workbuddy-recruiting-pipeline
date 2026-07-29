@@ -4,6 +4,10 @@ import {
   listJobs,
   updateJobStandard,
 } from "../../../db/repository";
+import {
+  deriveCandidateProfile,
+  deriveInterviewQuestions,
+} from "../../lib/job-analysis";
 
 export const runtime = "edge";
 
@@ -31,6 +35,8 @@ function serializeJob(job: Awaited<ReturnType<typeof listJobs>>[number]) {
     version: `v${job.version}`,
     updatedAt: job.updatedAt.toISOString(),
     createdAt: job.createdAt.toISOString(),
+    candidateProfile: deriveCandidateProfile(job),
+    interviewQuestions: deriveInterviewQuestions(job),
   };
 }
 
