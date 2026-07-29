@@ -160,6 +160,68 @@ function outputText(payload: ResponsePayload) {
   );
 }
 
+export type ModelRequestOptions = {
+  modelAllowed?: boolean;
+  limitWarning?: string;
+};
+
+export async function requestStructuredModel<T>({
+  schema,
+  schemaName,
+  instructions,
+  input,
+}: {
+  schema: Record<string, unknown>;
+  schemaName: string;
+  instructions: string;
+  input: string;
+}): Promise<{ value: T; model: string }> {
+  const provider = configuredProvider();
+  if (!provider) throw new Error("生产环境尚未配置所选模型服务的密钥");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 110_000);
+  try {
+    const response = await fetch(provider.endpoint, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${provider.apiKey}`,
+        "content-type": "application/json",
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: provider.model,
+        store: false,
+        ...(provider.id === "openai"
+          ? { reasoning: { effort: "medium" } }
+          : { thinking: { type: "disabled" } }),
+        text: {
+          ...(provider.id === "openai" ? { verbosity: "high" } : {}),
+          format: {
+            type: "json_schema",
+            name: schemaName,
+            strict: true,
+            schema,
+          },
+        },
+        instructions,
+        input,
+      }),
+    });
+    const payload = await response.json() as ResponsePayload;
+    if (!response.ok) {
+      throw new Error(payload.error?.message || `模型请求失败（${response.status}）`);
+    }
+    const text = outputText(payload);
+    if (!text) throw new Error("模型没有返回结构化结果");
+    return {
+      value: JSON.parse(text) as T,
+      model: `${provider.displayName} · ${provider.model}`,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function cleanArray(value: unknown, fallback: string[], limit = 12) {
   if (!Array.isArray(value)) return fallback;
   const cleaned = value
@@ -266,7 +328,7 @@ function fallbackWithWarning(job: JobAnalysisInput, warning: string) {
 
 export async function analyzeCandidateProfile(
   job: JobAnalysisInput,
-  options?: { modelAllowed?: boolean; limitWarning?: string },
+  options?: ModelRequestOptions,
 ): Promise<CandidateProfile> {
   const provider = configuredProvider();
   if (!provider) {
@@ -283,32 +345,11 @@ export async function analyzeCandidateProfile(
   }
 
   const fallback = deriveCandidateProfile(job);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 110_000);
   try {
-    const response = await fetch(provider.endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${provider.apiKey}`,
-        "content-type": "application/json",
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: provider.model,
-        store: false,
-        ...(provider.id === "openai"
-          ? { reasoning: { effort: "medium" } }
-          : { thinking: { type: "disabled" } }),
-        text: {
-          ...(provider.id === "openai" ? { verbosity: "high" } : {}),
-          format: {
-            type: "json_schema",
-            name: "candidate_profile",
-            strict: true,
-            schema: profileSchema,
-          },
-        },
-        instructions: `你是一名资深招聘负责人和人才画像顾问。把岗位 JD 转化为可直接用于人才寻访、简历筛选和用人经理校准的候选人画像。
+    const result = await requestStructuredModel<unknown>({
+      schema: profileSchema,
+      schemaName: "candidate_profile",
+      instructions: `你是一名资深招聘负责人和人才画像顾问。把岗位 JD 转化为可直接用于人才寻访、简历筛选和用人经理校准的候选人画像。
 
 要求：
 1. 只依据输入材料推断，不得虚构公司内部事实；不确定的信息放入 openQuestions。
@@ -319,7 +360,7 @@ export async function analyzeCandidateProfile(
 6. tradeoffs 说明人才市场中哪些条件可互相替代或放宽。
 7. jdEvidence 的 evidence 必须引用或紧贴 JD 原文，不得编造；confidence 反映推断强度。
 8. 使用专业、具体、可执行的中文，避免空泛词语和重复。`,
-        input: `岗位名称：${job.role}
+      input: `岗位名称：${job.role}
 所属部门：${job.department}
 
 岗位 JD：
@@ -333,24 +374,11 @@ ${job.gates.map((item) => `- ${item}`).join("\n")}
 
 规则预提取考察维度：
 ${job.interviewDimensions.map((item) => `- ${item}`).join("\n")}`,
-      }),
     });
-    const payload = await response.json() as ResponsePayload;
-    if (!response.ok) {
-      throw new Error(payload.error?.message || `模型请求失败（${response.status}）`);
-    }
-    const text = outputText(payload);
-    if (!text) throw new Error("模型没有返回结构化画像");
-    return normalizeModelProfile(
-      JSON.parse(text),
-      fallback,
-      `${provider.displayName} · ${provider.model}`,
-    );
+    return normalizeModelProfile(result.value, fallback, result.model);
   } catch (error) {
     const message = error instanceof Error ? error.message : "未知模型错误";
     return fallbackWithWarning(job, `模型分析暂不可用，已自动降级：${message}`);
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

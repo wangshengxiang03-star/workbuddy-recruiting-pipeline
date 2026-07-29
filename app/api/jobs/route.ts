@@ -11,6 +11,10 @@ import {
 } from "../../lib/job-analysis";
 import type { CandidateProfile } from "../../lib/job-analysis";
 import {
+  analyzeInterviewQuestions,
+  type InterviewQuestionSet,
+} from "../../lib/ai-interview-questions";
+import {
   analyzeCandidateProfile,
   modelAnalysisConfigured,
 } from "../../lib/ai-job-analysis";
@@ -35,6 +39,10 @@ type JobPayload = {
 
 function serializeJob(job: Awaited<ReturnType<typeof listJobs>>[number]) {
   const generatedProfile = deriveCandidateProfile(job);
+  const storedProfile = (job.candidateProfile ?? {}) as Partial<CandidateProfile> & {
+    interviewQuestionSet?: InterviewQuestionSet;
+  };
+  const { interviewQuestionSet, ...candidateProfile } = storedProfile;
   return {
     ...job,
     interviewDimensions: job.interviewDimensions.length
@@ -46,9 +54,19 @@ function serializeJob(job: Awaited<ReturnType<typeof listJobs>>[number]) {
     createdAt: job.createdAt.toISOString(),
     candidateProfile:
       job.candidateProfile && Object.keys(job.candidateProfile).length
-        ? { ...generatedProfile, ...job.candidateProfile }
+        ? { ...generatedProfile, ...candidateProfile }
         : generatedProfile,
-    interviewQuestions: deriveInterviewQuestions(job),
+    interviewQuestions:
+      interviewQuestionSet?.questions?.length
+        ? interviewQuestionSet.questions
+        : deriveInterviewQuestions(job),
+    interviewQuestionMeta:
+      interviewQuestionSet?.analysisMeta ?? {
+        source: "rules",
+        model: "本地规则引擎",
+        generatedAt: job.updatedAt.toISOString(),
+        warning: "当前题目由规则模板生成，重新分析岗位后可生成模型题目。",
+      },
   };
 }
 
@@ -144,22 +162,28 @@ export async function POST(request: Request) {
 
   const user = await getChatGPTUser();
   const standard = deriveStandard(body);
-  const profile = await analyzeCandidateProfile(
-    {
-      role: body.role.trim(),
-      department: body.department.trim(),
-      jdText: body.jdText.trim(),
-      supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
-      ...standard,
-    },
-    await modelOptions(request),
-  );
+  const analysisInput = {
+    role: body.role.trim(),
+    department: body.department.trim(),
+    jdText: body.jdText.trim(),
+    supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
+    ...standard,
+  };
+  const options = await modelOptions(request);
+  const [profile, interviewQuestionSet] = await Promise.all([
+    analyzeCandidateProfile(analysisInput, options),
+    analyzeInterviewQuestions(
+      analysisInput,
+      deriveCandidateProfile(analysisInput),
+      options,
+    ),
+  ]);
   const created = await createJobStandard({
     role: body.role.trim(),
     department: body.department.trim(),
     jdText: body.jdText.trim(),
     supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
-    candidateProfile: profile,
+    candidateProfile: { ...profile, interviewQuestionSet },
     owner: body.owner?.trim() || user?.displayName || user?.email || "招聘负责人",
     headcount,
     ...standard,
@@ -205,18 +229,29 @@ export async function PATCH(request: Request) {
         supplementalRequirements: nextSupplemental,
       })
     : null;
-  const regeneratedProfile = nextStandard
-    ? await analyzeCandidateProfile(
-        {
-          role: nextRole,
-          department: nextDepartment,
-          jdText: nextJd,
-          supplementalRequirements: nextSupplemental,
-          ...nextStandard,
-        },
-        await modelOptions(request),
-      )
+  const analysisInput = nextStandard
+    ? {
+        role: nextRole,
+        department: nextDepartment,
+        jdText: nextJd,
+        supplementalRequirements: nextSupplemental,
+        ...nextStandard,
+      }
     : null;
+  const analysisOptions = analysisInput ? await modelOptions(request) : undefined;
+  const [regeneratedProfile, interviewQuestionSet] = analysisInput
+    ? await Promise.all([
+        analyzeCandidateProfile(analysisInput, analysisOptions),
+        analyzeInterviewQuestions(
+          analysisInput,
+          deriveCandidateProfile(analysisInput),
+          analysisOptions,
+        ),
+      ])
+    : [null, null];
+  const existingQuestionSet = (
+    current.candidateProfile as { interviewQuestionSet?: InterviewQuestionSet } | null
+  )?.interviewQuestionSet;
 
   const updated = await updateJobStandard(body.id, {
     ...(body.role ? { role: body.role.trim() } : {}),
@@ -241,9 +276,21 @@ export async function PATCH(request: Request) {
       : {}),
     ...(body.status ? { status: body.status } : {}),
     ...(regeneratedProfile
-      ? { candidateProfile: regeneratedProfile }
+      ? {
+          candidateProfile: {
+            ...regeneratedProfile,
+            interviewQuestionSet,
+          },
+        }
       : body.candidateProfile
-        ? { candidateProfile: body.candidateProfile }
+        ? {
+            candidateProfile: {
+              ...body.candidateProfile,
+              ...(existingQuestionSet
+                ? { interviewQuestionSet: existingQuestionSet }
+                : {}),
+            },
+          }
         : {}),
   });
   if (!updated) {

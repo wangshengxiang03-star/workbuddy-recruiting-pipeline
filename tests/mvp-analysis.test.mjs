@@ -8,6 +8,8 @@ import {
   analyzeCandidateProfile,
   normalizeModelProfile,
 } from "../app/lib/ai-job-analysis.ts";
+import { analyzeInterviewQuestions } from "../app/lib/ai-interview-questions.ts";
+import { analyzeResumeWithModel } from "../app/lib/ai-resume-analysis.ts";
 import {
   buildResumeTags,
   parseResumeText,
@@ -197,6 +199,111 @@ test("uses Volcengine Ark when it is selected", async () => {
     else process.env.ARK_API_KEY = previousKey;
     if (previousModel === undefined) delete process.env.ARK_MODEL;
     else process.env.ARK_MODEL = previousModel;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("generates JD-specific interview questions with score guides", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  process.env.AI_PROVIDER = "openai";
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        output: [{
+          type: "message",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              questions: Array.from({ length: 8 }, (_, index) => ({
+                category: index === 0 ? "专业能力" : "经历深挖",
+                question: `第 ${index + 1} 道高级产品经理定制问题`,
+                focus: "判断方法与真实贡献",
+                followUp: "请说明当时的关键取舍。",
+                scoreGuide: ["优秀：证据完整", "合格：基本相关", "待验证：缺少证据"],
+              })),
+            }),
+          }],
+        }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  try {
+    const set = await analyzeInterviewQuestions(
+      job,
+      deriveCandidateProfile(job),
+    );
+    assert.equal(set.analysisMeta.source, "model");
+    assert.equal(set.questions.length, 8);
+    assert.equal(set.questions[0].scoreGuide.length, 3);
+    assert.match(set.questions[0].question, /高级产品经理/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+  }
+});
+
+test("uses model evidence for resume tags and screening recommendation", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousFetch = globalThis.fetch;
+  process.env.AI_PROVIDER = "openai";
+  process.env.OPENAI_API_KEY = "test-key";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        output: [{
+          type: "message",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              school: "浙江大学",
+              education: "本科",
+              years: 7,
+              currentCompany: "某科技公司",
+              currentTitle: "高级产品经理",
+              city: "上海",
+              skills: ["B 端 SaaS", "数据分析"],
+              highlights: ["主导核心指标提升 42%"],
+              tags: ["浙江大学", "7 年经验", "B 端 SaaS"],
+              strengths: ["有 B 端 SaaS 端到端产品经验"],
+              risks: ["团队管理范围需要核验"],
+              failedGates: [],
+              matchedDimensions: ["产品判断", "数据分析"],
+              score: 88,
+              recommendation: "建议进入面试，重点核验复杂项目中的个人决策。",
+            }),
+          }],
+        }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  const parsed = parseResumeText(
+    "姓名：林栩\n手机：13800138000\n浙江大学 本科\n7 年工作经验\n负责 B 端 SaaS 产品与数据分析。",
+    "林栩.pdf",
+  );
+  try {
+    const result = await analyzeResumeWithModel(parsed, "B 端 SaaS 数据分析", {
+      ...job,
+      supplementalRequirements: "",
+      weights: [["产品判断", 50], ["数据分析", 50]],
+    });
+    assert.equal(result.analysisMeta.source, "model");
+    assert.equal(result.score, 88);
+    assert.ok(result.tags.includes("B 端 SaaS"));
+    assert.match(result.recommendation, /建议进入面试/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
     if (previousProvider === undefined) delete process.env.AI_PROVIDER;
     else process.env.AI_PROVIDER = previousProvider;
   }

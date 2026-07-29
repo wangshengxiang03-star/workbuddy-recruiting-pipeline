@@ -214,6 +214,8 @@ button { color: inherit; }
 .resume-title > em.reserve, .resume-title > em.neutral { color: var(--amber); background: var(--amber-soft); }
 .tag-row { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
 .tag-row span { padding: 4px 7px; border: 1px solid #e7e7e2; border-radius: 5px; color: #696d74; background: #fafaf7; font-size: 7px; }
+.resume-recommendation { margin: 8px 0 0; color: #565a64; font-size: 8px; line-height: 1.55; }
+.resume-warning { margin: 6px 0 0; color: #9a6a2f; font-size: 7px; line-height: 1.5; }
 .resume-error { margin: 8px 0 0; color: #bc705d; font-size: 8px; }
 .score-box { min-height: 71px; padding: 10px; display: flex; flex-direction: column; justify-content: center; border-radius: 10px; text-align: center; }
 .score-box.strong { color: var(--green); background: var(--green-soft); }
@@ -242,6 +244,8 @@ button { color: inherit; }
 .question-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .question-notes p { margin: 0; padding: 9px 10px; border-radius: 8px; color: #6e7179; background: #f7f7f4; font-size: 8px; line-height: 1.55; }
 .question-notes i { margin-right: 7px; color: #9b9da3; font-size: 7px; font-style: normal; font-weight: 800; }
+.question-notes .score-guide { grid-column: 1 / -1; display: flex; align-items: flex-start; }
+.question-notes .score-guide span { flex: 1; }
 .interview-tip { margin-top: 14px; padding: 14px 17px; display: flex; gap: 12px; align-items: center; border: 1px solid #dedcf6; border-radius: 10px; background: #f7f6ff; }
 .interview-tip > i { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--purple); font-size: 9px; font-style: normal; }
 .interview-tip p { margin: 0; }

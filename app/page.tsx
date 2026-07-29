@@ -45,6 +45,7 @@ type InterviewQuestion = {
   question: string;
   focus: string;
   followUp: string;
+  scoreGuide?: string[];
 };
 
 type Job = {
@@ -60,6 +61,12 @@ type Job = {
   interviewDimensions: string[];
   candidateProfile: CandidateProfile;
   interviewQuestions: InterviewQuestion[];
+  interviewQuestionMeta: {
+    source: "model" | "rules" | "demo";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   updatedAt: string;
 };
 
@@ -71,6 +78,15 @@ type ResumeRecord = {
   score: number | null;
   result: string;
   tags: string[];
+  strengths: string[];
+  risks: string[];
+  recommendation: string;
+  analysisMeta: {
+    source: "model" | "rules";
+    model: string;
+    generatedAt: string;
+    warning: string;
+  };
   errorMessage: string | null;
   createdAt: string;
 };
@@ -320,7 +336,11 @@ export default function Home() {
     const content = selectedJob.interviewQuestions
       .map(
         (item, index) =>
-          `${index + 1}. 【${item.category}】${item.question}\n考察：${item.focus}\n追问：${item.followUp}`,
+          `${index + 1}. 【${item.category}】${item.question}\n考察：${item.focus}\n追问：${item.followUp}${
+            item.scoreGuide?.length
+              ? `\n评分参考：${item.scoreGuide.join("；")}`
+              : ""
+          }`,
       )
       .join("\n\n");
     await navigator.clipboard.writeText(content);
@@ -989,7 +1009,17 @@ function ScreeningView({
                 <div className="file-badge">{resume.name.split(".").pop()?.slice(0, 3).toUpperCase()}</div>
                 <div className="resume-main">
                   <div className="resume-title">
-                    <div><strong>{resume.name}</strong><span>{formatTime(resume.createdAt)}</span></div>
+                    <div>
+                      <strong>{resume.name}</strong>
+                      <span>
+                        {formatTime(resume.createdAt)} ·{" "}
+                        {resume.analysisMeta?.source === "model"
+                          ? "火山模型初筛"
+                          : resume.analysisMeta?.source === "rules"
+                            ? "规则降级"
+                            : "演示结果"}
+                      </span>
+                    </div>
                     <em className={scoreTone(resume.score)}>{resume.status}</em>
                   </div>
                   <div className="tag-row">
@@ -997,6 +1027,12 @@ function ScreeningView({
                       <span key={tag}>{tag}</span>
                     ))}
                   </div>
+                  {resume.recommendation && (
+                    <p className="resume-recommendation">{resume.recommendation}</p>
+                  )}
+                  {resume.analysisMeta?.warning && (
+                    <p className="resume-warning">{resume.analysisMeta.warning}</p>
+                  )}
                   {resume.errorMessage && <p className="resume-error">{resume.errorMessage}</p>}
                 </div>
                 <div className={`score-box ${scoreTone(resume.score)}`}>
@@ -1020,6 +1056,12 @@ function ScreeningView({
 }
 
 function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
+  const questionMeta = job.interviewQuestionMeta ?? {
+    source: "demo" as const,
+    model: "演示题库",
+    generatedAt: job.updatedAt,
+    warning: "当前展示演示题目；完整站点会调用模型生成定制题库。",
+  };
   return (
     <div className="questions-page">
       <section className="page-intro">
@@ -1029,6 +1071,24 @@ function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
           <p>每道问题都包含考察重点和建议追问，面试官拿来即可使用。</p>
         </div>
         <button className="primary-action" onClick={() => void onCopy()}>复制全部问题 <b>⌘</b></button>
+      </section>
+
+      <section className={`analysis-status ${questionMeta.source}`}>
+        <div>
+          <i>{questionMeta.source === "model" ? "AI" : "↳"}</i>
+          <span>
+            <strong>
+              {questionMeta.source === "model" ? "模型定制题库" : "规则模板题库"}
+            </strong>
+            <small>
+              {questionMeta.model} · 生成于 {formatTime(questionMeta.generatedAt)}
+            </small>
+          </span>
+        </div>
+        <p>
+          {questionMeta.warning ||
+            "已根据 JD、硬门槛和岗位画像生成，并附带追问与三级评分参考。"}
+        </p>
       </section>
 
       <section className="question-context">
@@ -1051,6 +1111,12 @@ function QuestionsView({ job, onCopy }: { job: Job; onCopy: () => void }) {
               <div className="question-notes">
                 <p><i>考察</i>{item.focus}</p>
                 <p><i>追问</i>{item.followUp}</p>
+                {item.scoreGuide?.length ? (
+                  <p className="score-guide">
+                    <i>评分</i>
+                    <span>{item.scoreGuide.join("；")}</span>
+                  </p>
+                ) : null}
               </div>
             </div>
           </article>
