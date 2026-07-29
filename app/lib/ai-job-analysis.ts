@@ -209,10 +209,17 @@ function fallbackWithWarning(job: JobAnalysisInput, warning: string) {
 
 export async function analyzeCandidateProfile(
   job: JobAnalysisInput,
+  options?: { modelAllowed?: boolean; limitWarning?: string },
 ): Promise<CandidateProfile> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return fallbackWithWarning(job, "生产环境尚未配置模型密钥，本次使用规则降级。");
+  }
+  if (options?.modelAllowed === false) {
+    return fallbackWithWarning(
+      job,
+      options.limitWarning || "今日模型体验次数已用完，本次使用规则降级。",
+    );
   }
 
   const fallback = deriveCandidateProfile(job);
@@ -279,4 +286,8 @@ ${job.interviewDimensions.map((item) => `- ${item}`).join("\n")}`,
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function modelAnalysisConfigured() {
+  return Boolean(process.env.OPENAI_API_KEY?.trim());
 }

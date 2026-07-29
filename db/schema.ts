@@ -56,6 +56,12 @@ export const activityLogs = sqliteTable("activity_logs", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const modelAnalysisUsage = sqliteTable("model_analysis_usage", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  visitorKey: text("visitor_key").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const resumeFiles = sqliteTable("resume_files", {
   id: text("id").primaryKey(),
   batchId: text("batch_id").notNull(),

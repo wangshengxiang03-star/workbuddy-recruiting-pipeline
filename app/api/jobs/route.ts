@@ -1,5 +1,6 @@
 import { getChatGPTUser } from "../../chatgpt-auth";
 import {
+  claimModelAnalysisQuota,
   createJobStandard,
   listJobs,
   updateJobStandard,
@@ -9,7 +10,10 @@ import {
   deriveInterviewQuestions,
 } from "../../lib/job-analysis";
 import type { CandidateProfile } from "../../lib/job-analysis";
-import { analyzeCandidateProfile } from "../../lib/ai-job-analysis";
+import {
+  analyzeCandidateProfile,
+  modelAnalysisConfigured,
+} from "../../lib/ai-job-analysis";
 
 export const runtime = "edge";
 
@@ -94,6 +98,32 @@ function deriveStandard(body: JobPayload) {
   };
 }
 
+async function visitorKey(request: Request) {
+  const raw = [
+    request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for") ||
+      "unknown",
+    request.headers.get("user-agent") || "unknown",
+  ].join("|");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(raw),
+  );
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 12)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function modelOptions(request: Request) {
+  if (!modelAnalysisConfigured()) return undefined;
+  const allowed = await claimModelAnalysisQuota(await visitorKey(request));
+  return {
+    modelAllowed: allowed,
+    limitWarning: "该访客今日的模型体验次数已用完，本次使用规则降级。",
+  };
+}
+
 export async function GET() {
   const jobRecords = await listJobs();
   return Response.json({ jobs: jobRecords.map(serializeJob) });
@@ -114,13 +144,16 @@ export async function POST(request: Request) {
 
   const user = await getChatGPTUser();
   const standard = deriveStandard(body);
-  const profile = await analyzeCandidateProfile({
-    role: body.role.trim(),
-    department: body.department.trim(),
-    jdText: body.jdText.trim(),
-    supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
-    ...standard,
-  });
+  const profile = await analyzeCandidateProfile(
+    {
+      role: body.role.trim(),
+      department: body.department.trim(),
+      jdText: body.jdText.trim(),
+      supplementalRequirements: body.supplementalRequirements?.trim() ?? "",
+      ...standard,
+    },
+    await modelOptions(request),
+  );
   const created = await createJobStandard({
     role: body.role.trim(),
     department: body.department.trim(),
@@ -173,13 +206,16 @@ export async function PATCH(request: Request) {
       })
     : null;
   const regeneratedProfile = nextStandard
-    ? await analyzeCandidateProfile({
-        role: nextRole,
-        department: nextDepartment,
-        jdText: nextJd,
-        supplementalRequirements: nextSupplemental,
-        ...nextStandard,
-      })
+    ? await analyzeCandidateProfile(
+        {
+          role: nextRole,
+          department: nextDepartment,
+          jdText: nextJd,
+          supplementalRequirements: nextSupplemental,
+          ...nextStandard,
+        },
+        await modelOptions(request),
+      )
     : null;
 
   const updated = await updateJobStandard(body.id, {
