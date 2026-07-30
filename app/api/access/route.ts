@@ -8,13 +8,13 @@ export async function POST(request: Request) {
   const nextPath = safeNextPath(String(form.get("next") ?? "/"));
 
   if (!accessIsConfigured() || submitted !== expected) {
-    return NextResponse.redirect(
-      new URL(`/access?error=1&next=${encodeURIComponent(nextPath)}`, request.url),
-      303,
-    );
+    return redirect(`/access?error=1&next=${encodeURIComponent(nextPath)}`);
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, request.url), 303);
+  // Keep the Location header relative. CloudBase terminates HTTPS at its
+  // gateway, so request.url can contain the container's internal
+  // http://0.0.0.0:3000 origin after a form POST.
+  const response = redirect(nextPath);
   response.cookies.set("workbuddy_access", await accessCookieValue(), {
     httpOnly: true,
     sameSite: "lax",
@@ -23,6 +23,13 @@ export async function POST(request: Request) {
     path: "/",
   });
   return response;
+}
+
+function redirect(location: string) {
+  return new NextResponse(null, {
+    status: 303,
+    headers: { location },
+  });
 }
 
 function safeNextPath(value: string) {
