@@ -9,8 +9,14 @@ import {
 } from "./schema";
 
 let schemaReady: Promise<void> | null = null;
+let seedReady: Promise<void> | null = null;
+
+function skipDatabaseBootstrap() {
+  return process.env.SKIP_DATABASE_BOOTSTRAP === "true";
+}
 
 export function ensureDatabaseSchema() {
+  if (skipDatabaseBootstrap()) return Promise.resolve();
   if (schemaReady) return schemaReady;
   schemaReady = (async () => {
     const db = getDb();
@@ -278,10 +284,19 @@ const seedJobs: Array<typeof jobs.$inferInsert> = [
 ];
 
 export async function ensureSeedData() {
-  await ensureDatabaseSchema();
-  const db = getDb();
-  await db.insert(candidates).values(seedCandidates).onConflictDoNothing();
-  await db.insert(jobs).values(seedJobs).onConflictDoNothing();
+  if (skipDatabaseBootstrap()) return;
+  if (!seedReady) {
+    seedReady = (async () => {
+      await ensureDatabaseSchema();
+      const db = getDb();
+      await db.insert(candidates).values(seedCandidates).onConflictDoNothing();
+      await db.insert(jobs).values(seedJobs).onConflictDoNothing();
+    })().catch((error) => {
+      seedReady = null;
+      throw error;
+    });
+  }
+  await seedReady;
 }
 
 export async function listCandidates() {

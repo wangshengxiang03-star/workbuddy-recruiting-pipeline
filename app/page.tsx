@@ -198,6 +198,8 @@ export default function Home() {
   const [selectedJobId, setSelectedJobId] = useState("");
   const [resumes, setResumes] = useState<ResumeRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reloadToken, setReloadToken] = useState(0);
   const [processing, setProcessing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
@@ -226,32 +228,51 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    async function bootstrap() {
+
+    async function loadJson<T>(url: string, timeoutMs: number) {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const [jobResponse, resumeResponse] = await Promise.all([
-          fetch("/api/jobs", { cache: "no-store" }),
-          fetch("/api/resumes", { cache: "no-store" }),
-        ]);
-        if (!jobResponse.ok || !resumeResponse.ok) throw new Error("数据读取失败");
-        const [jobPayload, resumePayload] = (await Promise.all([
-          jobResponse.json(),
-          resumeResponse.json(),
-        ])) as [{ jobs: Job[] }, { files: ResumeRecord[] }];
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("数据读取失败");
+        return (await response.json()) as T;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    }
+
+    async function bootstrap() {
+      setLoading(true);
+      setLoadError("");
+      const resumeRequest = loadJson<{ files: ResumeRecord[] }>(
+        "/api/resumes",
+        15_000,
+      ).catch(() => null);
+
+      try {
+        const jobPayload = await loadJson<{ jobs: Job[] }>("/api/jobs", 15_000);
         if (!active) return;
         setJobs(jobPayload.jobs);
         setSelectedJobId(jobPayload.jobs[0]?.id ?? "");
-        setResumes(resumePayload.files);
       } catch {
-        if (active) setToast("数据同步失败，请刷新重试");
+        if (active) {
+          setLoadError("网络连接较慢，岗位数据暂未加载完成。");
+        }
       } finally {
         if (active) setLoading(false);
       }
+
+      const resumePayload = await resumeRequest;
+      if (active && resumePayload) setResumes(resumePayload.files);
     }
     void bootstrap();
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadToken]);
 
   const createJob = async (formData: FormData) => {
     setCreating(true);
@@ -524,7 +545,16 @@ export default function Home() {
             <div className="loading-state">
               <i />
               <strong>正在准备招聘判断工作区</strong>
-              <span>同步岗位与简历数据…</span>
+              <span>正在读取岗位数据，首次进入可能需要几秒…</span>
+            </div>
+          ) : loadError ? (
+            <div className="empty-state">
+              <span>连接超时</span>
+              <h2>岗位数据暂未加载完成</h2>
+              <p>{loadError}请检查网络后重试，无需重新输入体验码。</p>
+              <button onClick={() => setReloadToken((value) => value + 1)}>
+                重新加载
+              </button>
             </div>
           ) : !selectedJob ? (
             <div className="empty-state">
