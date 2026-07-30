@@ -1,0 +1,14 @@
+.git
+.github
+.edgeone
+.next
+.openai
+.vercel
+.wrangler
+dist
+node_modules
+outputs
+work
+.env
+.env.*
+*.log
