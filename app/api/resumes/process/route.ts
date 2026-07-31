@@ -22,27 +22,12 @@ const PROCESSING_STALE_MS = 90_000;
 function selectJob(
   jobs: Awaited<ReturnType<typeof listJobs>>,
   targetRole: string | null,
-  fileName: string,
-  text: string,
 ) {
   if (targetRole) {
     const exact = jobs.find((job) => job.role === targetRole);
     if (exact) return exact;
   }
-  const haystack = `${fileName}\n${text.slice(0, 4000)}`.toLowerCase();
-  const exactRole = jobs.find((job) => haystack.includes(job.role.toLowerCase()));
-  if (exactRole) return exactRole;
-  const roleHints: Array<[RegExp, string[]]> = [
-    [/产品|需求|saas|b\s*端/i, ["产品"]],
-    [/增长|投放|转化|运营/i, ["增长"]],
-    [/招聘|人力|人才/i, ["招聘", "人力"]],
-  ];
-  for (const [pattern, roleWords] of roleHints) {
-    if (!pattern.test(haystack)) continue;
-    const found = jobs.find((job) => roleWords.some((word) => job.role.includes(word)));
-    if (found) return found;
-  }
-  return jobs[0];
+  return null;
 }
 
 function initials(name: string) {
@@ -114,13 +99,16 @@ export async function POST(request: Request) {
           extractedText: text.slice(0, 50000),
           parsedData: parsed,
           duplicateOf: duplicate.id,
-          targetRole: duplicate.role,
+          targetRole: record.targetRole ?? duplicate.role,
         });
         processed.push(updated);
         continue;
       }
 
-      const job = selectJob(jobs, record.targetRole, record.originalName, text);
+      const job = selectJob(jobs, record.targetRole);
+      if (!job) {
+        throw new Error("缺少目标岗位，请刷新页面后在当前岗位下重新上传简历");
+      }
       const modelAllowed = modelAnalysisConfigured()
         ? await claimModelAnalysisQuota(requestVisitorKey)
         : true;

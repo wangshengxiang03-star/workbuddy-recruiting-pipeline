@@ -282,6 +282,18 @@ export async function POST(request: Request) {
     );
   }
 
+  const jobs = await listJobs();
+  if (!targetRole) {
+    return Response.json(
+      { error: "请先选择岗位后再上传简历；如果刚更新过页面，请刷新后重试" },
+      { status: 400 },
+    );
+  }
+  const selectedJob = jobs.find((job) => job.role === targetRole);
+  if (!selectedJob) {
+    return Response.json({ error: "目标岗位不存在，请刷新页面后重试" }, { status: 400 });
+  }
+
   for (const file of files) {
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!allowedExtensions.has(extension)) {
@@ -325,7 +337,7 @@ export async function POST(request: Request) {
         storageKey,
         contentType: file.type || "application/octet-stream",
         sizeBytes: file.size,
-        targetRole: targetRole || null,
+        targetRole: selectedJob.role,
         status: "已入库",
         result: "等待解析",
         uploadedBy: user?.email ?? null,
