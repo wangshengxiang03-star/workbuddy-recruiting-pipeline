@@ -273,6 +273,7 @@ export async function POST(request: Request) {
   const files = formData
     .getAll("files")
     .filter((item): item is File => item instanceof File);
+  const targetRole = String(formData.get("targetRole") ?? "").trim();
 
   if (!files.length || files.length > MAX_BATCH_FILES) {
     return Response.json(
@@ -324,6 +325,7 @@ export async function POST(request: Request) {
         storageKey,
         contentType: file.type || "application/octet-stream",
         sizeBytes: file.size,
+        targetRole: targetRole || null,
         status: "已入库",
         result: "等待解析",
         uploadedBy: user?.email ?? null,

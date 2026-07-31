@@ -17,6 +17,8 @@ import {
 
 export const runtime = "edge";
 
+const PROCESSING_STALE_MS = 90_000;
+
 function selectJob(
   jobs: Awaited<ReturnType<typeof listJobs>>,
   targetRole: string | null,
@@ -68,9 +70,14 @@ async function visitorKey(request: Request) {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
   const records = await getResumeRecords(body.ids);
-  const pending = records.filter((record) =>
-    ["已入库", "解析失败", "需人工处理", "待 OCR"].includes(record.status),
-  );
+  const now = Date.now();
+  const pending = records.filter((record) => {
+    if (["已入库", "解析失败", "需人工处理", "待 OCR"].includes(record.status)) {
+      return true;
+    }
+    return record.status === "文本解析" &&
+      now - record.updatedAt.getTime() > PROCESSING_STALE_MS;
+  });
   if (!pending.length) {
     return Response.json({ processed: [], message: "没有待处理的简历" });
   }

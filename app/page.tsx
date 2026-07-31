@@ -224,6 +224,70 @@ export default function Home() {
     setResumes(payload.files);
   };
 
+  const mergeResumeRecords = (files: ResumeRecord[]) => {
+    setResumes((current) => {
+      const updates = new Map(files.map((file) => [file.id, file]));
+      const merged = current.map((file) => updates.get(file.id) ?? file);
+      const existing = new Set(merged.map((file) => file.id));
+      for (const file of files) {
+        if (!existing.has(file.id)) merged.unshift(file);
+      }
+      return merged;
+    });
+  };
+
+  const triggerResumeProcessing = (ids: string[]) => {
+    void fetch("/api/resumes/process", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          notify(payload.error ?? "简历后台处理启动失败");
+        }
+      })
+      .catch(() => {
+        // 处理结果以轮询接口为准，网关超时后会在下一轮重试。
+      });
+  };
+
+  const pollResumeProcessing = async (ids: string[]) => {
+    const pendingStatuses = new Set(["已入库", "文本解析"]);
+    const deadline = Date.now() + 240_000;
+    let nextRetryAt = Date.now() + 30_000;
+    let latest: ResumeRecord[] = [];
+
+    while (Date.now() < deadline) {
+      const files = await Promise.all(
+        ids.map(async (id) => {
+          const response = await fetch(`/api/resumes?id=${encodeURIComponent(id)}`, {
+            cache: "no-store",
+          });
+          if (!response.ok) throw new Error("简历处理状态读取失败");
+          const payload = (await response.json()) as { file: ResumeRecord };
+          return payload.file;
+        }),
+      );
+      latest = files;
+      mergeResumeRecords(files);
+      if (files.every((file) => !pendingStatuses.has(file.status))) {
+        return files;
+      }
+      if (Date.now() >= nextRetryAt) {
+        triggerResumeProcessing(ids);
+        nextRetryAt = Date.now() + 30_000;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+
+    if (latest.length) mergeResumeRecords(latest);
+    throw new Error("简历仍在后台处理中，请稍后刷新查看结果");
+  };
+
   useEffect(() => {
     let active = true;
     async function bootstrap() {
@@ -289,10 +353,15 @@ export default function Home() {
 
   const uploadResumes = async (files: FileList | null) => {
     if (!files?.length) return;
+    if (!selectedJob) {
+      notify("请先选择或创建岗位");
+      return;
+    }
     setProcessing(true);
     try {
       const formData = new FormData();
       Array.from(files).forEach((file) => formData.append("files", file));
+      formData.append("targetRole", selectedJob.role);
       const uploadResponse = await fetch("/api/resumes", {
         method: "POST",
         body: formData,
@@ -305,23 +374,16 @@ export default function Home() {
         throw new Error(uploadPayload.error ?? "简历上传失败");
       }
       const ids = uploadPayload.files.map((file) => file.id);
-      const processResponse = await fetch("/api/resumes/process", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ids }),
-      });
-      const processPayload = (await processResponse.json()) as {
-        summary?: { total: number; completed: number; manual: number };
-        error?: string;
-      };
-      if (!processResponse.ok) {
-        throw new Error(processPayload.error ?? "简历处理失败");
-      }
+      mergeResumeRecords(uploadPayload.files);
+      notify("简历已入库，正在后台提取信息并生成标签");
+
+      triggerResumeProcessing(ids);
+      const processed = await pollResumeProcessing(ids);
       await loadResumes();
       notify(
-        processPayload.summary
-          ? `已完成 ${processPayload.summary.total} 份简历初筛`
-          : "简历已进入初筛队列",
+        processed.every((file) => ["已完成", "硬门槛淘汰", "重复投递"].includes(file.status))
+          ? `已完成 ${processed.length} 份简历初筛`
+          : "简历处理完成，部分记录需要人工处理",
       );
     } catch (error) {
       notify(error instanceof Error ? error.message : "简历处理失败");
